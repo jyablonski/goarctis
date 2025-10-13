@@ -22,6 +22,7 @@ func NewTrayManager() *TrayManager {
 
 func (t *TrayManager) Initialize() {
 	systray.SetTitle("🎧")
+	// systray.SetIcon(IconData)
 	systray.SetTooltip("Arctis GameBuds Manager")
 
 	// Create menu items
