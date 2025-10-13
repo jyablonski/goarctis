@@ -2,12 +2,16 @@
 
 Linux System Tray Application for monitoring SteelSeries Arctis GameBuds.
 
+![goarctis system tray](https://github.com/user-attachments/assets/82cc7a96-b721-4201-9f9b-c0c5fe120792)
+
 ## Features
+
+SteelSeries doesn't provide a Linux application for managing the Arctis GameBuds. This application fills that gap by offering:
 
 - Real-time battery monitoring for both earbuds
 - ANC mode display (Active/Transparency/Off)
 - Wear detection (In Case/Out/Wearing)
-- System tray integration
+- System tray integration for easy access
 
 ## Requirements
 
