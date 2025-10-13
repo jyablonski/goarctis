@@ -1,0 +1,35 @@
+# Binaries
+goarctis
+*.exe
+*.dll
+*.so
+*.dylib
+bin/*
+
+# Test binaries
+*.test
+
+# Output of go coverage tool
+*.out
+coverage.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files from development
+test_hid
+test_hidraw
