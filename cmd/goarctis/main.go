@@ -1,6 +1,8 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -10,16 +12,26 @@ import (
 	"github.com/jyablonski/goarctis/pkg/device"
 	"github.com/jyablonski/goarctis/pkg/protocol"
 	"github.com/jyablonski/goarctis/pkg/ui"
+	"github.com/jyablonski/goarctis/pkg/version"
 )
 
 var (
-	hidManager  *device.HIDRawManager
-	trayManager *ui.TrayManager
+	deviceManager *device.DeviceManager
+	trayManager   *ui.TrayManager
 )
 
 func main() {
+	// Parse command line flags
+	showVersion := flag.Bool("version", false, "Print version and exit")
+	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("goarctis version %s\n", version.Version)
+		os.Exit(0)
+	}
+
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
-	log.Println("Starting goarctis...")
+	log.Printf("Starting goarctis version %s...", version.Version)
 
 	// Setup signal handling
 	sigChan := make(chan os.Signal, 1)
@@ -40,22 +52,35 @@ func onReady() {
 	trayManager = ui.NewTrayManager()
 	trayManager.Initialize()
 
-	// Initialize HID manager
-	hidManager = device.NewHIDRawManager()
-	hidManager.SetOnStateChange(onStateChange)
+	// Initialize device manager
+	deviceManager = device.NewDeviceManager()
+	deviceManager.SetOnStateChange(onStateChange)
 
-	// Try to find and connect
+	// Discover and start devices
 	go func() {
-		if err := hidManager.FindDevices(); err != nil {
-			log.Printf("Failed to find devices: %v", err)
-			trayManager.SetStatus("Device not found")
+		if err := deviceManager.DiscoverDevices(); err != nil {
+			log.Printf("Failed to discover devices: %v", err)
+			trayManager.SetStatus("No devices found")
 			return
 		}
 
-		trayManager.SetStatus("🎧 Connected")
+		devices := deviceManager.GetAllDevices()
+		if len(devices) == 0 {
+			trayManager.SetStatus("No devices found")
+			return
+		}
 
-		// Start listening
-		go hidManager.Listen()
+		// Build status message
+		deviceNames := make([]string, 0, len(devices))
+		for _, dev := range devices {
+			deviceNames = append(deviceNames, dev.GetName())
+		}
+		trayManager.SetStatus(fmt.Sprintf("Connected: %d device(s)", len(devices)))
+
+		// Start monitoring all devices
+		if err := deviceManager.StartAll(); err != nil {
+			log.Printf("Failed to start some devices: %v", err)
+		}
 	}()
 
 	// Handle quit button
@@ -66,16 +91,16 @@ func onReady() {
 	}()
 }
 
-func onStateChange(state protocol.DeviceState) {
-	trayManager.UpdateState(state)
+func onStateChange(deviceID string, state protocol.DeviceState) {
+	trayManager.UpdateDeviceState(deviceID, state)
 }
 
 func cleanup() {
 	log.Println("Cleaning up...")
 
-	if hidManager != nil {
-		log.Println("Closing HID devices")
-		hidManager.Close()
+	if deviceManager != nil {
+		log.Println("Closing all devices")
+		deviceManager.CloseAll()
 	}
 
 	log.Println("Cleanup complete")

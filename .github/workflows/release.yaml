@@ -1,0 +1,79 @@
+name: goarctis Release Pipeline
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    name: Release Pipeline
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # Fetch all history for git describe
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            pkg-config
+
+      - name: Get version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Run tests
+        run: make test
+
+      - name: Build binary
+        run: make build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Rename binary with version and platform
+        id: binary_name
+        run: |
+          BINARY_NAME="goarctis-${{ steps.version.outputs.version }}-linux-amd64"
+          mv bin/goarctis bin/${BINARY_NAME}
+          echo "binary_name=${BINARY_NAME}" >> $GITHUB_OUTPUT
+          echo "Binary renamed to: ${BINARY_NAME}"
+
+      - name: Verify binary
+        run: |
+          test -f bin/${{ steps.binary_name.outputs.binary_name }}
+          ./bin/${{ steps.binary_name.outputs.binary_name }} --version
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bin/${{ steps.binary_name.outputs.binary_name }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify:
+    name: Deploy Notification
+    needs: [release]
+    if: always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Slack Alert
+        uses: jyablonski/actions/alert@v1
+        with:
+          status: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}

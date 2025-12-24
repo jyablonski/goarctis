@@ -197,13 +197,21 @@ func TestGetState(t *testing.T) {
 
 	state := manager.GetState()
 
-	if state.LeftBattery != 75 {
-		t.Errorf("Left battery = %d, want 75", state.LeftBattery)
+	if state.LeftBattery == nil || *state.LeftBattery != 75 {
+		val := 0
+		if state.LeftBattery != nil {
+			val = *state.LeftBattery
+		}
+		t.Errorf("Left battery = %d, want 75", val)
 	}
-	if state.RightBattery != 80 {
-		t.Errorf("Right battery = %d, want 80", state.RightBattery)
+	if state.RightBattery == nil || *state.RightBattery != 80 {
+		val := 0
+		if state.RightBattery != nil {
+			val = *state.RightBattery
+		}
+		t.Errorf("Right battery = %d, want 80", val)
 	}
-	if state.ANCMode != protocol.ANCTransparency {
+	if state.ANCMode == nil || *state.ANCMode != protocol.ANCTransparency {
 		t.Errorf("ANC mode = %v, want Transparency", state.ANCMode)
 	}
 }
@@ -228,7 +236,9 @@ func TestStopAndClose(t *testing.T) {
 	}
 
 	// Close should not panic
-	manager.Close()
+	if err := manager.Close(); err != nil {
+		t.Errorf("Close returned error: %v", err)
+	}
 
 	// Verify stop channel is closed
 	select {
@@ -239,20 +249,12 @@ func TestStopAndClose(t *testing.T) {
 	}
 }
 
-func TestListen_NoDevices(t *testing.T) {
+func TestStart_NoDevices(t *testing.T) {
 	manager := NewHIDRawManager()
 
-	// Should return immediately without panic
-	done := make(chan bool)
-	go func() {
-		manager.Listen()
-		done <- true
-	}()
-
-	select {
-	case <-done:
-		// Good, returned immediately
-	case <-time.After(100 * time.Millisecond):
-		t.Error("Listen did not return when no devices")
+	// Should return error when no devices
+	err := manager.Start()
+	if err == nil {
+		t.Error("Start should return error when no devices")
 	}
 }

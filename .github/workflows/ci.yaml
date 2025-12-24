@@ -1,4 +1,4 @@
-name: goarctis CI/CD Pipeline
+name: goarctis CI Pipeline
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  test:
-    name: Test and Build
+  ci_pipeline:
+    name: CI Pipeline
     runs-on: ubuntu-latest
 
     steps:
@@ -18,7 +18,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.24"
+          go-version: "1.25"
           cache: true
 
       - name: Install system dependencies
@@ -39,8 +39,17 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building with version: $VERSION"
+
       - name: Build binary
         run: make build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
 
       - name: Verify binary was created
         run: test -f bin/goarctis

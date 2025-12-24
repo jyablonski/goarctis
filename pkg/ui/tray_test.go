@@ -56,74 +56,74 @@ func TestGetANCIcon(t *testing.T) {
 	}
 }
 
-func TestFormatBatteryDisplay(t *testing.T) {
+func TestFormatGameBudsBattery(t *testing.T) {
 	tests := []struct {
 		name     string
-		battery  int
-		status   protocol.EarbudStatus
+		battery  *int
+		status   *protocol.EarbudStatus
 		side     string
 		expected string
 	}{
 		{
 			name:     "In case with battery",
-			battery:  80,
-			status:   protocol.StatusInCase,
+			battery:  func() *int { b := 80; return &b }(),
+			status:   func() *protocol.EarbudStatus { s := protocol.StatusInCase; return &s }(),
 			side:     "Left",
 			expected: "🔋 Left: 80% - Charging",
 		},
 		{
 			name:     "In case without battery",
-			battery:  0,
-			status:   protocol.StatusInCase,
+			battery:  func() *int { b := 0; return &b }(),
+			status:   func() *protocol.EarbudStatus { s := protocol.StatusInCase; return &s }(),
 			side:     "Right",
 			expected: "📦 Right: In Case",
 		},
 		{
 			name:     "Out of case with battery",
-			battery:  75,
-			status:   protocol.StatusOut,
+			battery:  func() *int { b := 75; return &b }(),
+			status:   func() *protocol.EarbudStatus { s := protocol.StatusOut; return &s }(),
 			side:     "Left",
 			expected: "🔋 Left: 75% - Out",
 		},
 		{
 			name:     "Out of case without battery",
-			battery:  0,
-			status:   protocol.StatusOut,
+			battery:  func() *int { b := 0; return &b }(),
+			status:   func() *protocol.EarbudStatus { s := protocol.StatusOut; return &s }(),
 			side:     "Right",
 			expected: "🎧 Right: Out",
 		},
 		{
 			name:     "Wearing with high battery",
-			battery:  90,
-			status:   protocol.StatusWorn,
+			battery:  func() *int { b := 90; return &b }(),
+			status:   func() *protocol.EarbudStatus { s := protocol.StatusWorn; return &s }(),
 			side:     "Left",
 			expected: "🔋 Left: 90% - Wearing",
 		},
 		{
 			name:     "Wearing with low battery",
-			battery:  15,
-			status:   protocol.StatusWorn,
+			battery:  func() *int { b := 15; return &b }(),
+			status:   func() *protocol.EarbudStatus { s := protocol.StatusWorn; return &s }(),
 			side:     "Right",
 			expected: "🪫 Right: 15% - Wearing",
 		},
 		{
 			name:     "Wearing without battery",
-			battery:  0,
-			status:   protocol.StatusWorn,
+			battery:  func() *int { b := 0; return &b }(),
+			status:   func() *protocol.EarbudStatus { s := protocol.StatusWorn; return &s }(),
 			side:     "Left",
 			expected: "👂 Left: Wearing",
 		},
 		{
 			name:     "Unknown status with battery",
-			battery:  50,
-			status:   protocol.EarbudStatus(0),
+			battery:  func() *int { b := 50; return &b }(),
+			status:   nil,
 			side:     "Left",
 			expected: "🔋 Left: 50%",
 		},
 		{
 			name:     "Unknown status without battery",
-			battery:  0,
-			status:   protocol.EarbudStatus(0),
+			battery:  nil,
+			status:   nil,
 			side:     "Right",
 			expected: "🎧 Right: --",
 		},
@@ -131,9 +131,9 @@ func TestFormatBatteryDisplay(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatBatteryDisplay(tt.battery, tt.status, tt.side)
+			got := formatGameBudsBattery(tt.battery, tt.status, tt.side)
 			if got != tt.expected {
-				t.Errorf("formatBatteryDisplay(%d, %v, %s) = %v, want %v",
+				t.Errorf("formatGameBudsBattery(%v, %v, %s) = %v, want %v",
 					tt.battery, tt.status, tt.side, got, tt.expected)
 			}
 		})
@@ -151,14 +151,11 @@ func TestNewTrayManager(t *testing.T) {
 	if manager.mStatus != nil {
 		t.Error("mStatus should be nil before Initialize")
 	}
-	if manager.mBatteryL != nil {
-		t.Error("mBatteryL should be nil before Initialize")
+	if manager.gameBudsMenu != nil {
+		t.Error("gameBudsMenu should be nil before Initialize")
 	}
-	if manager.mBatteryR != nil {
-		t.Error("mBatteryR should be nil before Initialize")
-	}
-	if manager.mANCMode != nil {
-		t.Error("mANCMode should be nil before Initialize")
+	if manager.razerMenu != nil {
+		t.Error("razerMenu should be nil before Initialize")
 	}
 	if manager.mQuit != nil {
 		t.Error("mQuit should be nil before Initialize")
@@ -257,9 +254,11 @@ func TestLowestBatteryCalculation(t *testing.T) {
 }
 
 // Benchmark the formatting functions
-func BenchmarkFormatBatteryDisplay(b *testing.B) {
+func BenchmarkFormatGameBudsBattery(b *testing.B) {
+	battery := 75
+	status := protocol.StatusWorn
 	for i := 0; i < b.N; i++ {
-		formatBatteryDisplay(75, protocol.StatusWorn, "Left")
+		formatGameBudsBattery(&battery, &status, "Left")
 	}
 }
 
