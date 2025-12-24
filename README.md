@@ -1,5 +1,8 @@
 # goarctis
 
+![CI Pipeline](https://github.com/jyablonski/goarctis/actions/workflows/ci.yaml/badge.svg)
+![CD Pipeline](https://github.com/jyablonski/goarctis/actions/workflows/release.yaml/badge.svg)
+
 Linux System Tray Application written in Go for monitoring battery levels of wireless devices, including SteelSeries Arctis GameBuds and Razer devices (via OpenRazer Linux Driver).
 
 <img width="423" height="485" alt="goarctis system tray" src="assets/tray-screenshot.png" />
