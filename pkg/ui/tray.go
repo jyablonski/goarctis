@@ -7,6 +7,7 @@ import (
 
 	"github.com/getlantern/systray"
 	"github.com/jyablonski/goarctis/pkg/protocol"
+	"github.com/jyablonski/goarctis/pkg/version"
 )
 
 type TrayManager struct {
@@ -35,7 +36,7 @@ func NewTrayManager() *TrayManager {
 
 func (t *TrayManager) Initialize() {
 	systray.SetTitle("🎧")
-	systray.SetTooltip("Battery Monitor")
+	systray.SetTooltip(fmt.Sprintf("Battery Monitor (v%s)", version.Version))
 
 	// Status item
 	t.mStatus = systray.AddMenuItem("Initializing...", "Connection status")
@@ -235,7 +236,7 @@ func (t *TrayManager) updateTrayIcon() {
 	// Update tray icon
 	if len(titleParts) == 0 {
 		systray.SetTitle("🎧")
-		systray.SetTooltip("No devices connected")
+		systray.SetTooltip(fmt.Sprintf("No devices connected (v%s)", version.Version))
 	} else {
 		title := ""
 		for i, part := range titleParts {
@@ -247,7 +248,7 @@ func (t *TrayManager) updateTrayIcon() {
 		log.Printf("Setting tray title: %s", title)
 		systray.SetTitle(title)
 
-		// Update tooltip
+		// Update tooltip with version
 		tooltip := ""
 		for i, part := range tooltipParts {
 			if i > 0 {
@@ -255,6 +256,7 @@ func (t *TrayManager) updateTrayIcon() {
 			}
 			tooltip += part
 		}
+		tooltip += fmt.Sprintf(" (v%s)", version.Version)
 		systray.SetTooltip(tooltip)
 	}
 }

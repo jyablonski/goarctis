@@ -3,6 +3,8 @@ name: goarctis CI/CD Pipeline
 on:
   push:
     branches: [main]
+    tags:
+      - "v*"
   pull_request:
     branches: [main]
 
@@ -39,8 +41,68 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building with version: $VERSION"
+
       - name: Build binary
         run: make build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
 
       - name: Verify binary was created
         run: test -f bin/goarctis
+
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # Fetch all history for git describe
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            pkg-config
+
+      - name: Get version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Build binary
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          go build -ldflags "-X github.com/jyablonski/goarctis/pkg/version.Version=$VERSION" \
+            -o bin/goarctis cmd/goarctis/main.go
+
+      - name: Verify binary
+        run: |
+          test -f bin/goarctis
+          ./bin/goarctis --version
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bin/goarctis
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

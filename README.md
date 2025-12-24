@@ -62,6 +62,48 @@ Run Tests:
 make test
 ```
 
+Check Version:
+
+```bash
+./bin/goarctis --version
+```
+
+## Releases
+
+### Creating a Release
+
+To create a new release:
+
+1. **Create and push a git tag**:
+
+   ```bash
+   make release VERSION=v0.2.0
+   ```
+
+   This will:
+
+   - Create an annotated git tag with the specified version
+   - Push the tag to the remote repository
+   - Trigger the GitHub Actions release workflow
+
+2. **The release workflow will automatically**:
+   - Build the binary with the version injected
+   - Create a GitHub release with release notes
+   - Upload the compiled binary as a release artifact
+
+### Version Detection
+
+The application automatically detects its version:
+
+- **Release builds**: Version is injected at build time via `-ldflags`
+- **Development builds**: Uses `git describe --tags --always --dirty` or defaults to "dev"
+- **Manual override**: Set `VERSION` environment variable when building
+
+The version is displayed:
+
+- Via the `--version` command-line flag
+- In the system tray tooltip
+
 ## Documentation
 
 For more detailed documentation, see the [`docs/`](docs/) folder:

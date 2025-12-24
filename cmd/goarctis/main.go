@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/jyablonski/goarctis/pkg/device"
 	"github.com/jyablonski/goarctis/pkg/protocol"
 	"github.com/jyablonski/goarctis/pkg/ui"
+	"github.com/jyablonski/goarctis/pkg/version"
 )
 
 var (
@@ -19,8 +21,17 @@ var (
 )
 
 func main() {
+	// Parse command line flags
+	showVersion := flag.Bool("version", false, "Print version and exit")
+	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("goarctis version %s\n", version.Version)
+		os.Exit(0)
+	}
+
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
-	log.Println("Starting goarctis...")
+	log.Printf("Starting goarctis version %s...", version.Version)
 
 	// Setup signal handling
 	sigChan := make(chan os.Signal, 1)
