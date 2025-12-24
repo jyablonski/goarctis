@@ -1,4 +1,4 @@
-name: goarctis CD Pipeline
+name: goarctis Release Pipeline
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   release:
-    name: CD Pipeline
+    name: Release Pipeline
     runs-on: ubuntu-latest
 
     steps:

@@ -31,21 +31,55 @@ Linux System Tray Application written in Go for monitoring battery levels of wir
 
 ## Requirements
 
-- Go 1.25 or later
 - Linux with PulseAudio/PipeWire
 - **For GameBuds:** SteelSeries Arctis GameBuds
 - **For Razer devices:** OpenRazer daemon installed and running
+- **For building from source:** Go 1.25 or later
 
 ## Installation
 
-### 1. Clone the repository
+### Quick Install (Recommended)
+
+Download the latest release binary from [GitHub Releases](https://github.com/jyablonski/goarctis/releases):
 
 ```bash
-git clone https://github.com/yourusername/goarctis.git
+# Download the latest release (replace v0.1.0 with the latest version)
+VERSION=v0.1.0
+wget https://github.com/jyablonski/goarctis/releases/download/${VERSION}/goarctis-${VERSION}-linux-amd64
+
+# Install to system
+sudo mv goarctis-${VERSION}-linux-amd64 /usr/local/bin/goarctis
+sudo chmod +x /usr/local/bin/goarctis
+
+# Verify installation
+goarctis --version
+```
+
+### Build from Source
+
+For developers or if you want to build from source:
+
+1. **Clone the repository**:
+
+```bash
+git clone https://github.com/jyablonski/goarctis.git
 cd goarctis
 ```
 
-### Commands
+2. **Build the binary**:
+
+```bash
+make build
+```
+
+3. **Install**:
+
+```bash
+sudo cp bin/goarctis /usr/local/bin/
+sudo chmod +x /usr/local/bin/goarctis
+```
+
+### Development Commands
 
 Run the Application:
 
@@ -138,7 +172,19 @@ WantedBy=default.target
 EOF
 ```
 
-2. **Build and install the binary**:
+2. **Install the binary**:
+
+**Option A: Download from GitHub Release (Recommended)**
+
+```bash
+# Download latest release (replace v0.1.0 with latest version)
+VERSION=v0.1.0
+wget https://github.com/jyablonski/goarctis/releases/download/${VERSION}/goarctis-${VERSION}-linux-amd64
+sudo mv goarctis-${VERSION}-linux-amd64 /usr/local/bin/goarctis
+sudo chmod +x /usr/local/bin/goarctis
+```
+
+**Option B: Build from Source**
 
 ```bash
 make build
@@ -162,7 +208,27 @@ systemctl --user status goarctis.service
 
 ### Updating the Service
 
-To update goarctis after making changes, use the provided script:
+**Option A: Update from GitHub Release (Recommended)**
+
+Download and install the latest release:
+
+```bash
+# Stop the service
+systemctl --user stop goarctis.service
+
+# Download latest release (replace v0.1.0 with latest version)
+VERSION=v0.1.0
+wget https://github.com/jyablonski/goarctis/releases/download/${VERSION}/goarctis-${VERSION}-linux-amd64
+sudo mv goarctis-${VERSION}-linux-amd64 /usr/local/bin/goarctis
+sudo chmod +x /usr/local/bin/goarctis
+
+# Start the service
+systemctl --user start goarctis.service
+```
+
+**Option B: Update from Source (For Developers)**
+
+If you're building from source, use the provided script:
 
 ```bash
 ./scripts/update_systemd.sh
@@ -171,7 +237,7 @@ To update goarctis after making changes, use the provided script:
 This script will:
 
 - Stop the running service
-- Build the new binary
+- Build the new binary from source
 - Install it to `/usr/local/bin/goarctis`
 - Restart the service
 - Show the service status
