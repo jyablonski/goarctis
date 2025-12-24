@@ -39,26 +39,33 @@ func (fs RealFileSystem) OpenFile(name string, flag int, perm os.FileMode) (io.R
 }
 
 type HIDRawManager struct {
-	devices  []io.ReadCloser
-	protocol *protocol.Handler
-	stopChan chan struct{}
-	fs       FileSystem
+	devices    []io.ReadCloser
+	protocol   *protocol.Handler
+	stopChan   chan struct{}
+	fs         FileSystem
+	deviceID   string
+	deviceName string
+	onChange   func(protocol.DeviceState)
 }
 
 func NewHIDRawManager() *HIDRawManager {
 	return &HIDRawManager{
-		protocol: protocol.NewHandler(),
-		stopChan: make(chan struct{}),
-		fs:       RealFileSystem{},
+		protocol:   protocol.NewHandler(),
+		stopChan:   make(chan struct{}),
+		fs:         RealFileSystem{},
+		deviceID:   "steelseries_gamebuds",
+		deviceName: "SteelSeries Arctis GameBuds",
 	}
 }
 
 // NewHIDRawManagerWithFS creates a manager with a custom filesystem (for testing)
 func NewHIDRawManagerWithFS(fs FileSystem) *HIDRawManager {
 	return &HIDRawManager{
-		protocol: protocol.NewHandler(),
-		stopChan: make(chan struct{}),
-		fs:       fs,
+		protocol:   protocol.NewHandler(),
+		stopChan:   make(chan struct{}),
+		fs:         fs,
+		deviceID:   "steelseries_gamebuds",
+		deviceName: "SteelSeries Arctis GameBuds",
 	}
 }
 
@@ -114,16 +121,38 @@ func (m *HIDRawManager) FindDevices() error {
 	return nil
 }
 
-// SetOnStateChange sets a callback for when device state changes
-func (m *HIDRawManager) SetOnStateChange(callback func(protocol.DeviceState)) {
-	m.protocol.SetOnChange(callback)
+// GetID returns the device identifier
+func (m *HIDRawManager) GetID() string {
+	return m.deviceID
 }
 
-// Listen starts monitoring all HID interfaces
-func (m *HIDRawManager) Listen() {
+// GetName returns the device name
+func (m *HIDRawManager) GetName() string {
+	return m.deviceName
+}
+
+// GetType returns the device type
+func (m *HIDRawManager) GetType() DeviceType {
+	return DeviceTypeSteelSeriesGameBuds
+}
+
+// SetOnStateChange sets a callback for when device state changes
+func (m *HIDRawManager) SetOnStateChange(callback func(protocol.DeviceState)) {
+	m.onChange = callback
+	// Wrap callback to set device ID and type
+	m.protocol.SetOnChange(func(state protocol.DeviceState) {
+		state.DeviceID = m.deviceID
+		state.DeviceType = string(DeviceTypeSteelSeriesGameBuds)
+		if m.onChange != nil {
+			m.onChange(state)
+		}
+	})
+}
+
+// Start begins monitoring all HID interfaces
+func (m *HIDRawManager) Start() error {
 	if len(m.devices) == 0 {
-		log.Println("No devices to monitor")
-		return
+		return fmt.Errorf("no devices to monitor")
 	}
 
 	log.Printf("Monitoring %d HID interfaces...", len(m.devices))
@@ -158,24 +187,38 @@ func (m *HIDRawManager) Listen() {
 		}()
 	}
 
-	// Wait for stop signal
-	<-m.stopChan
+	return nil
 }
 
 // GetState returns the current device state
 func (m *HIDRawManager) GetState() protocol.DeviceState {
-	return m.protocol.GetState()
+	state := m.protocol.GetState()
+	state.DeviceID = m.deviceID
+	state.DeviceType = string(DeviceTypeSteelSeriesGameBuds)
+	return state
+}
+
+// IsConnected returns whether the device is connected
+func (m *HIDRawManager) IsConnected() bool {
+	return len(m.devices) > 0
 }
 
 // Stop stops monitoring
-func (m *HIDRawManager) Stop() {
-	close(m.stopChan)
+func (m *HIDRawManager) Stop() error {
+	select {
+	case <-m.stopChan:
+		// Already closed
+	default:
+		close(m.stopChan)
+	}
+	return nil
 }
 
 // Close closes all devices
-func (m *HIDRawManager) Close() {
+func (m *HIDRawManager) Close() error {
 	m.Stop()
 	for _, dev := range m.devices {
 		dev.Close()
 	}
+	return nil
 }

@@ -20,16 +20,22 @@ func TestParseBattery(t *testing.T) {
 			expectedRight: 80,
 		},
 		{
-			name:          "zero battery when in case should update",
-			data:          []byte{0xB7, 0, 85},
-			initialState:  DeviceState{LeftStatus: StatusInCase, LeftBattery: 50},
+			name: "zero battery when in case should update",
+			data: []byte{0xB7, 0, 85},
+			initialState: DeviceState{
+				LeftStatus:  func() *EarbudStatus { s := StatusInCase; return &s }(),
+				LeftBattery: func() *int { b := 50; return &b }(),
+			},
 			expectedLeft:  0,
 			expectedRight: 85,
 		},
 		{
-			name:          "zero battery when not in case should not update",
-			data:          []byte{0xB7, 0, 80},
-			initialState:  DeviceState{LeftStatus: StatusWorn, LeftBattery: 50},
+			name: "zero battery when not in case should not update",
+			data: []byte{0xB7, 0, 80},
+			initialState: DeviceState{
+				LeftStatus:  func() *EarbudStatus { s := StatusWorn; return &s }(),
+				LeftBattery: func() *int { b := 50; return &b }(),
+			},
 			expectedLeft:  50, // Should keep previous value
 			expectedRight: 80,
 		},
@@ -56,11 +62,19 @@ func TestParseBattery(t *testing.T) {
 
 			h.parseBattery(tt.data)
 
-			if h.state.LeftBattery != tt.expectedLeft {
-				t.Errorf("Left battery = %d, want %d", h.state.LeftBattery, tt.expectedLeft)
+			if h.state.LeftBattery == nil || *h.state.LeftBattery != tt.expectedLeft {
+				val := 0
+				if h.state.LeftBattery != nil {
+					val = *h.state.LeftBattery
+				}
+				t.Errorf("Left battery = %d, want %d", val, tt.expectedLeft)
 			}
-			if h.state.RightBattery != tt.expectedRight {
-				t.Errorf("Right battery = %d, want %d", h.state.RightBattery, tt.expectedRight)
+			if h.state.RightBattery == nil || *h.state.RightBattery != tt.expectedRight {
+				val := 0
+				if h.state.RightBattery != nil {
+					val = *h.state.RightBattery
+				}
+				t.Errorf("Right battery = %d, want %d", val, tt.expectedRight)
 			}
 		})
 	}
@@ -110,10 +124,10 @@ func TestParseWearStatus(t *testing.T) {
 			h := NewHandler()
 			h.parseWearStatus(tt.data)
 
-			if h.state.LeftStatus != tt.expectedLeft {
+			if h.state.LeftStatus == nil || *h.state.LeftStatus != tt.expectedLeft {
 				t.Errorf("Left status = %v, want %v", h.state.LeftStatus, tt.expectedLeft)
 			}
-			if h.state.RightStatus != tt.expectedRight {
+			if h.state.RightStatus == nil || *h.state.RightStatus != tt.expectedRight {
 				t.Errorf("Right status = %v, want %v", h.state.RightStatus, tt.expectedRight)
 			}
 		})
@@ -148,7 +162,7 @@ func TestParseANCMode(t *testing.T) {
 			h := NewHandler()
 			h.parseANCMode(tt.data)
 
-			if h.state.ANCMode != tt.expectedANC {
+			if h.state.ANCMode == nil || *h.state.ANCMode != tt.expectedANC {
 				t.Errorf("ANC mode = %v, want %v", h.state.ANCMode, tt.expectedANC)
 			}
 		})
@@ -231,8 +245,12 @@ func TestStateCallback(t *testing.T) {
 	if callCount != 1 {
 		t.Errorf("Expected 1 callback, got %d", callCount)
 	}
-	if capturedState.LeftBattery != 75 {
-		t.Errorf("Expected left battery 75, got %d", capturedState.LeftBattery)
+	if capturedState.LeftBattery == nil || *capturedState.LeftBattery != 75 {
+		val := 0
+		if capturedState.LeftBattery != nil {
+			val = *capturedState.LeftBattery
+		}
+		t.Errorf("Expected left battery 75, got %d", val)
 	}
 
 	// Same update - should NOT trigger callback
@@ -289,12 +307,18 @@ func TestANCModeString(t *testing.T) {
 }
 
 func TestDeviceStateString(t *testing.T) {
+	leftBattery := 75
+	rightBattery := 80
+	leftStatus := StatusWorn
+	rightStatus := StatusOut
+	ancMode := ANCActive
 	state := DeviceState{
-		LeftBattery:  75,
-		RightBattery: 80,
-		LeftStatus:   StatusWorn,
-		RightStatus:  StatusOut,
-		ANCMode:      ANCActive,
+		DeviceType:   "steelseries_gamebuds",
+		LeftBattery:  &leftBattery,
+		RightBattery: &rightBattery,
+		LeftStatus:   &leftStatus,
+		RightStatus:  &rightStatus,
+		ANCMode:      &ancMode,
 	}
 
 	expected := "L:75% (Wearing) | R:80% (Out of Case) | ANC:Active Noise Cancellation"
@@ -311,19 +335,27 @@ func TestGetState(t *testing.T) {
 
 	state := h.GetState()
 
-	if state.LeftBattery != 75 {
-		t.Errorf("LeftBattery = %d, want 75", state.LeftBattery)
+	if state.LeftBattery == nil || *state.LeftBattery != 75 {
+		val := 0
+		if state.LeftBattery != nil {
+			val = *state.LeftBattery
+		}
+		t.Errorf("LeftBattery = %d, want 75", val)
 	}
-	if state.RightBattery != 80 {
-		t.Errorf("RightBattery = %d, want 80", state.RightBattery)
+	if state.RightBattery == nil || *state.RightBattery != 80 {
+		val := 0
+		if state.RightBattery != nil {
+			val = *state.RightBattery
+		}
+		t.Errorf("RightBattery = %d, want 80", val)
 	}
-	if state.LeftStatus != StatusWorn {
+	if state.LeftStatus == nil || *state.LeftStatus != StatusWorn {
 		t.Errorf("LeftStatus = %v, want StatusWorn", state.LeftStatus)
 	}
-	if state.RightStatus != StatusOut {
+	if state.RightStatus == nil || *state.RightStatus != StatusOut {
 		t.Errorf("RightStatus = %v, want StatusOut", state.RightStatus)
 	}
-	if state.ANCMode != ANCTransparency {
+	if state.ANCMode == nil || *state.ANCMode != ANCTransparency {
 		t.Errorf("ANCMode = %v, want ANCTransparency", state.ANCMode)
 	}
 }

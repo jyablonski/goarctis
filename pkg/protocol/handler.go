@@ -57,25 +57,90 @@ func (s EarbudStatus) String() string {
 	}
 }
 
-// DeviceState represents the current state of the GameBuds
+// DeviceState represents the current state of a device
+// Fields are optional - only populated for devices that support them
 type DeviceState struct {
-	LeftBattery     int
-	RightBattery    int
-	DockBattery     int
-	LeftStatus      EarbudStatus
-	RightStatus     EarbudStatus
-	ANCMode         ANCMode
+	DeviceID        string
+	DeviceType      string
+	Battery         *int          // Primary battery level (for single-battery devices)
+	LeftBattery     *int          // Left battery (for dual-battery devices like GameBuds)
+	RightBattery    *int          // Right battery (for dual-battery devices like GameBuds)
+	DockBattery     *int          // Dock/case battery (for GameBuds)
+	IsCharging      *bool         // Whether device is charging
+	LeftStatus      *EarbudStatus // Left earbud status (GameBuds only)
+	RightStatus     *EarbudStatus // Right earbud status (GameBuds only)
+	ANCMode         *ANCMode      // ANC mode (GameBuds only)
 	IsConnected     bool
 	FirmwareVersion string
 }
 
+// GetPrimaryBattery returns the primary battery level
+// For dual-battery devices, returns the lower of the two
+// Returns -1 if no battery information is available
+func (s DeviceState) GetPrimaryBattery() int {
+	if s.Battery != nil {
+		return *s.Battery
+	}
+	if s.LeftBattery != nil && s.RightBattery != nil {
+		left := *s.LeftBattery
+		right := *s.RightBattery
+		if left < right {
+			return left
+		}
+		return right
+	}
+	if s.LeftBattery != nil {
+		return *s.LeftBattery
+	}
+	if s.RightBattery != nil {
+		return *s.RightBattery
+	}
+	return -1
+}
+
 func (s DeviceState) String() string {
-	return fmt.Sprintf(
-		"L:%d%% (%s) | R:%d%% (%s) | ANC:%s",
-		s.LeftBattery, s.LeftStatus,
-		s.RightBattery, s.RightStatus,
-		s.ANCMode,
-	)
+	switch s.DeviceType {
+	case "steelseries_gamebuds":
+		leftStr := "--"
+		rightStr := "--"
+		ancStr := "Unknown"
+
+		if s.LeftBattery != nil {
+			leftStatus := "Unknown"
+			if s.LeftStatus != nil {
+				leftStatus = s.LeftStatus.String()
+			}
+			leftStr = fmt.Sprintf("%d%% (%s)", *s.LeftBattery, leftStatus)
+		}
+		if s.RightBattery != nil {
+			rightStatus := "Unknown"
+			if s.RightStatus != nil {
+				rightStatus = s.RightStatus.String()
+			}
+			rightStr = fmt.Sprintf("%d%% (%s)", *s.RightBattery, rightStatus)
+		}
+		if s.ANCMode != nil {
+			ancStr = s.ANCMode.String()
+		}
+
+		return fmt.Sprintf("L:%s | R:%s | ANC:%s", leftStr, rightStr, ancStr)
+	case "razer_deathadder":
+		batteryStr := "--"
+		chargingStr := ""
+		if s.Battery != nil {
+			batteryStr = fmt.Sprintf("%d%%", *s.Battery)
+		}
+		if s.IsCharging != nil && *s.IsCharging {
+			chargingStr = " (Charging)"
+		}
+		return fmt.Sprintf("Battery: %s%s", batteryStr, chargingStr)
+	default:
+		batteryStr := "--"
+		if s.Battery != nil {
+			batteryStr = fmt.Sprintf("%d%%", *s.Battery)
+		}
+		return fmt.Sprintf("Battery: %s", batteryStr)
+	}
 }
 
 // Handler processes HID reports from the GameBuds
@@ -87,6 +152,7 @@ type Handler struct {
 func NewHandler() *Handler {
 	return &Handler{
 		state: DeviceState{
+			DeviceType:  "steelseries_gamebuds",
 			IsConnected: true,
 		},
 	}
@@ -104,7 +170,7 @@ func (h *Handler) ParseReport(data []byte) error {
 	}
 
 	reportID := data[0]
-	oldState := h.state
+	oldState := h.copyState()
 
 	switch reportID {
 	case ReportBattery:
@@ -122,11 +188,86 @@ func (h *Handler) ParseReport(data []byte) error {
 	}
 
 	// If state changed, trigger callback
-	if h.onChange != nil && oldState != h.state {
+	if h.onChange != nil && !h.statesEqual(oldState, h.state) {
 		h.onChange(h.state)
 	}
 
 	return nil
+}
+
+// copyState creates a deep copy of the state for comparison
+func (h *Handler) copyState() DeviceState {
+	state := h.state
+	copy := DeviceState{
+		DeviceID:        state.DeviceID,
+		DeviceType:      state.DeviceType,
+		IsConnected:     state.IsConnected,
+		FirmwareVersion: state.FirmwareVersion,
+	}
+	if state.Battery != nil {
+		b := *state.Battery
+		copy.Battery = &b
+	}
+	if state.LeftBattery != nil {
+		b := *state.LeftBattery
+		copy.LeftBattery = &b
+	}
+	if state.RightBattery != nil {
+		b := *state.RightBattery
+		copy.RightBattery = &b
+	}
+	if state.DockBattery != nil {
+		b := *state.DockBattery
+		copy.DockBattery = &b
+	}
+	if state.IsCharging != nil {
+		b := *state.IsCharging
+		copy.IsCharging = &b
+	}
+	if state.LeftStatus != nil {
+		s := *state.LeftStatus
+		copy.LeftStatus = &s
+	}
+	if state.RightStatus != nil {
+		s := *state.RightStatus
+		copy.RightStatus = &s
+	}
+	if state.ANCMode != nil {
+		m := *state.ANCMode
+		copy.ANCMode = &m
+	}
+	return copy
+}
+
+// statesEqual compares two DeviceState structs, handling pointer fields
+func (h *Handler) statesEqual(s1, s2 DeviceState) bool {
+	if s1.DeviceID != s2.DeviceID || s1.DeviceType != s2.DeviceType || s1.IsConnected != s2.IsConnected {
+		return false
+	}
+	if !pointerEqual(s1.Battery, s2.Battery) ||
+		!pointerEqual(s1.LeftBattery, s2.LeftBattery) ||
+		!pointerEqual(s1.RightBattery, s2.RightBattery) ||
+		!pointerEqual(s1.DockBattery, s2.DockBattery) ||
+		!pointerEqual(s1.IsCharging, s2.IsCharging) {
+		return false
+	}
+	if !pointerEqual(s1.LeftStatus, s2.LeftStatus) ||
+		!pointerEqual(s1.RightStatus, s2.RightStatus) ||
+		!pointerEqual(s1.ANCMode, s2.ANCMode) {
+		return false
+	}
+	return true
+}
+
+// pointerEqual compares two pointers of the same type
+func pointerEqual[T comparable](p1, p2 *T) bool {
+	if p1 == nil && p2 == nil {
+		return true
+	}
+	if p1 == nil || p2 == nil {
+		return false
+	}
+	return *p1 == *p2
 }
 
 func (h *Handler) parseBattery(data []byte) {
@@ -139,14 +280,23 @@ func (h *Handler) parseBattery(data []byte) {
 
 	// Only update battery if it's a valid reading (not 0 unless actually dead)
 	// When an earbud is in the case, the device sometimes reports 0
-	if leftBattery > 0 || h.state.LeftStatus == StatusInCase {
-		h.state.LeftBattery = leftBattery
+	leftStatus := StatusInCase
+	if h.state.LeftStatus != nil {
+		leftStatus = *h.state.LeftStatus
 	}
-	if rightBattery > 0 || h.state.RightStatus == StatusInCase {
-		h.state.RightBattery = rightBattery
+	rightStatus := StatusInCase
+	if h.state.RightStatus != nil {
+		rightStatus = *h.state.RightStatus
 	}
 
-	log.Printf("🔋 Battery: Left %d%%, Right %d%%", h.state.LeftBattery, h.state.RightBattery)
+	if leftBattery > 0 || leftStatus == StatusInCase {
+		h.state.LeftBattery = &leftBattery
+	}
+	if rightBattery > 0 || rightStatus == StatusInCase {
+		h.state.RightBattery = &rightBattery
+	}
+
+	log.Printf("🔋 Battery: Left %d%%, Right %d%%", leftBattery, rightBattery)
 }
 
 func (h *Handler) parseWearStatus(data []byte) {
@@ -154,10 +304,12 @@ func (h *Handler) parseWearStatus(data []byte) {
 		return
 	}
 
-	h.state.LeftStatus = EarbudStatus(data[3])
-	h.state.RightStatus = EarbudStatus(data[4])
+	leftStatus := EarbudStatus(data[3])
+	rightStatus := EarbudStatus(data[4])
+	h.state.LeftStatus = &leftStatus
+	h.state.RightStatus = &rightStatus
 
-	log.Printf("👂 Status: Left=%s, Right=%s", h.state.LeftStatus, h.state.RightStatus)
+	log.Printf("👂 Status: Left=%s, Right=%s", leftStatus, rightStatus)
 }
 
 func (h *Handler) parseANCMode(data []byte) {
@@ -165,8 +317,9 @@ func (h *Handler) parseANCMode(data []byte) {
 		return
 	}
 
-	h.state.ANCMode = ANCMode(data[1])
-	log.Printf("🎧 ANC Mode: %s", h.state.ANCMode)
+	ancMode := ANCMode(data[1])
+	h.state.ANCMode = &ancMode
+	log.Printf("🎧 ANC Mode: %s", ancMode)
 }
 
 func (h *Handler) parseInEarEvent(data []byte) {

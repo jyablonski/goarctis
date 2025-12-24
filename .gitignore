@@ -32,3 +32,6 @@ Thumbs.db
 # Test files from development
 test_hid
 test_hidraw
+
+# docs
+docs/apuntes.md
