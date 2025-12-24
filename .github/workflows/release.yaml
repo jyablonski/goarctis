@@ -65,3 +65,15 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify:
+    name: Deploy Notification
+    needs: [release]
+    if: always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Slack Alert
+        uses: jyablonski/actions/alert@v1
+        with:
+          status: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
