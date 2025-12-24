@@ -5,6 +5,10 @@ on:
     tags:
       - "v*"
 
+# required for creating the release
+permissions:
+  contents: write
+
 jobs:
   release:
     name: Release Pipeline
