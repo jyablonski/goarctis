@@ -1,158 +1,89 @@
 # goarctis
 
 ![CI Pipeline](https://github.com/jyablonski/goarctis/actions/workflows/ci.yaml/badge.svg)
-![CD Pipeline](https://github.com/jyablonski/goarctis/actions/workflows/release.yaml/badge.svg)
 
-Linux System Tray Application written in Go for monitoring battery levels of wireless devices, including SteelSeries Arctis GameBuds and Razer devices (via OpenRazer Linux Driver).
+A Linux system tray application for monitoring battery levels of wireless peripherals and Docker containers.
+
+## What It Does
+
+`goarctis` sits in your system tray and shows real-time battery status for SteelSeries GameBuds and Razer devices, plus Docker container counts. It uses HID for GameBuds and OpenRazer's D-Bus API for Razer mice.
 
 <img width="423" height="485" alt="goarctis system tray" src="assets/tray-screenshot.png" />
 
-## Features
+## Why
 
-### SteelSeries Arctis GameBuds
+Wireless peripherals don't expose battery levels in any standard Linux UI. Instead of checking dmesg, using device-specific GUIs, or polling D-Bus manually:
 
-- Real-time battery monitoring for both earbuds
-- ANC mode display (Active/Transparency/Off)
-- Wear detection (In Case/Out/Wearing)
-- System tray integration for easy access
+```bash
+# Before
+sudo cat /dev/hidraw3 | xxd   # hope you picked the right device
+dbus-send --print-reply --dest=org.razer ... getBattery
 
-### Razer Devices (via OpenRazer)
-
-- Battery level monitoring for supported Razer devices
-- Charging/Wireless mode detection
-- Automatic reconnection handling for mode switches
-- Works with any Razer device that supports battery reporting via OpenRazer
-
-### Multi-Device Support
-
-- Monitor multiple devices simultaneously
-- Unified system tray display showing both device battery levels
-- Automatic device discovery at startup
-
-## Requirements
-
-- Linux with PulseAudio/PipeWire
-- **For GameBuds:** SteelSeries Arctis GameBuds
-- **For Razer devices:** OpenRazer daemon installed and running
-- **For building from source:** Go 1.25 or later
+# After
+goarctis                       # battery levels in the system tray
+goarctis --disable-gamebuds    # only monitor Razer + Docker
+```
 
 ## Installation
 
-### Quick Install (Recommended)
-
-Download the latest release binary from [GitHub Releases](https://github.com/jyablonski/goarctis/releases):
+**Download the latest release:**
 
 ```bash
-# Download the latest release (replace v0.1.0 with the latest version)
-VERSION=v0.1.0
-wget https://github.com/jyablonski/goarctis/releases/download/${VERSION}/goarctis-${VERSION}-linux-amd64
-
-# Install to system
-sudo mv goarctis-${VERSION}-linux-amd64 /usr/local/bin/goarctis
-sudo chmod +x /usr/local/bin/goarctis
-
-# Verify installation
-goarctis --version
+curl -L https://github.com/jyablonski/goarctis/releases/latest/download/goarctis-linux-amd64 -o ~/.local/bin/goarctis
+chmod +x ~/.local/bin/goarctis
 ```
 
-### Build from Source
+Make sure `~/.local/bin` is in your `PATH`:
 
-For developers or if you want to build from source:
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
 
-1. **Clone the repository**:
+**Or build from source:**
 
 ```bash
 git clone https://github.com/jyablonski/goarctis.git
 cd goarctis
-```
-
-2. **Build the binary**:
-
-```bash
 make build
-```
 
-3. **Install**:
-
-```bash
+# Binary is at bin/goarctis
 sudo cp bin/goarctis /usr/local/bin/
-sudo chmod +x /usr/local/bin/goarctis
 ```
 
-### Development Commands
+### Build Dependencies
 
-Run the Application:
+Building from source requires GTK3 and AppIndicator development libraries:
 
 ```bash
-make run
+# Ubuntu/Debian
+sudo apt install libayatana-appindicator3-dev libgtk-3-dev pkg-config
+
+# Arch Linux
+sudo pacman -S libayatana-appindicator gtk3 pkgconf
 ```
 
-Build the binary:
+### Runtime Requirements
 
-```bash
-make build
-```
+- Linux with PulseAudio/PipeWire
+- **GameBuds:** SteelSeries Arctis GameBuds connected via USB dongle
+- **Razer devices:** [OpenRazer](https://openrazer.github.io/) daemon installed and running
+- **Docker monitoring:** Docker CLI available in `PATH`
 
-Run Tests:
+## Usage
 
-```bash
-make test
-```
+| Flag | Description | Example |
+| --- | --- | --- |
+| `--version` | Print version and exit | `goarctis --version` |
+| `--disable-gamebuds` | Skip GameBuds monitoring | `goarctis --disable-gamebuds` |
+| `--disable-razer` | Skip Razer device monitoring | `goarctis --disable-razer` |
 
-Check Version:
+Disabled device sections are completely hidden from the tray dropdown menu.
 
-```bash
-./bin/goarctis --version
-```
+Use `goarctis --help` for all available flags.
 
-## Releases
+## Systemd Service
 
-### Creating a Release
-
-To create a new release:
-
-1. **Create and push a git tag**:
-
-   ```bash
-   make release VERSION=v0.2.0
-   ```
-
-   This will:
-
-   - Create an annotated git tag with the specified version
-   - Push the tag to the remote repository
-   - Trigger the GitHub Actions release workflow
-
-2. **The release workflow will automatically**:
-   - Build the binary with the version injected
-   - Create a GitHub release with release notes
-   - Upload the compiled binary as a release artifact
-
-### Version Detection
-
-The application automatically detects its version:
-
-- **Release builds**: Version is injected at build time via `-ldflags`
-- **Development builds**: Uses `git describe --tags --always --dirty` or defaults to "dev"
-- **Manual override**: Set `VERSION` environment variable when building
-
-The version is displayed:
-
-- Via the `--version` command-line flag
-- In the system tray tooltip
-
-## Documentation
-
-For more detailed documentation, see the [`docs/`](docs/) folder:
-
-- **[Code Structure](docs/code_structure.md)**: Detailed explanation of the project structure, package organization, and design principles
-- **[How It Works](docs/how_it_works.md)**: In-depth technical documentation on HID device communication, protocol parsing, and system tray integration
-
-## Systemd Service Setup
-
-To run goarctis as a systemd user service (automatically starts on login and runs in the background):
-
-1. **Create the systemd service file** (if it doesn't exist):
+To run goarctis as a user service that starts on login:
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -170,76 +101,71 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 EOF
-```
 
-2. **Install the binary**:
-
-**Option A: Download from GitHub Release (Recommended)**
-
-```bash
-# Download latest release (replace v0.1.0 with latest version)
-VERSION=v0.1.0
-wget https://github.com/jyablonski/goarctis/releases/download/${VERSION}/goarctis-${VERSION}-linux-amd64
-sudo mv goarctis-${VERSION}-linux-amd64 /usr/local/bin/goarctis
-sudo chmod +x /usr/local/bin/goarctis
-```
-
-**Option B: Build from Source**
-
-```bash
-make build
-sudo cp bin/goarctis /usr/local/bin/
-sudo chmod +x /usr/local/bin/goarctis
-```
-
-3. **Enable and start the service**:
-
-```bash
 systemctl --user daemon-reload
-systemctl --user enable goarctis.service
-systemctl --user start goarctis.service
+systemctl --user enable --now goarctis.service
 ```
 
-4. **Check service status**:
+To update, stop the service, replace the binary, and restart:
 
 ```bash
-systemctl --user status goarctis.service
-```
-
-### Updating the Service
-
-**Option A: Update from GitHub Release (Recommended)**
-
-Download and install the latest release:
-
-```bash
-# Stop the service
 systemctl --user stop goarctis.service
-
-# Download latest release (replace v0.1.0 with latest version)
-VERSION=v0.1.0
-wget https://github.com/jyablonski/goarctis/releases/download/${VERSION}/goarctis-${VERSION}-linux-amd64
-sudo mv goarctis-${VERSION}-linux-amd64 /usr/local/bin/goarctis
-sudo chmod +x /usr/local/bin/goarctis
-
-# Start the service
+# install new binary ...
 systemctl --user start goarctis.service
 ```
 
-**Option B: Update from Source (For Developers)**
+Or use the provided script: `./scripts/update_systemd.sh`
 
-If you're building from source, use the provided script:
+## Development
 
 ```bash
-./scripts/update_systemd.sh
+make build          # Build binary
+make run            # Run the application
+make test           # Run tests
+make test-coverage  # Run tests with HTML coverage report
+make build-test     # Build as goarctis-test (avoids conflicts with running instance)
+make clean          # Remove build artifacts
+make deps           # Download and tidy dependencies
 ```
 
-This script will:
+### Releases
 
-- Stop the running service
-- Build the new binary from source
-- Install it to `/usr/local/bin/goarctis`
-- Restart the service
-- Show the service status
+```bash
+make release VERSION=v0.2.0
+```
 
-**Note**: The systemd setup has been tested on Ubuntu. For other Linux distributions, you may need to adjust paths or service configuration. Contributions for other distributions are welcome!
+This validates semver format, checks for a clean working directory and duplicate tags, then creates and pushes an annotated git tag. The CI pipeline builds the binary and creates a GitHub release automatically.
+
+## Project Structure
+
+```
+├── cmd/
+│   └── goarctis/
+│       └── main.go           # entry point, flag parsing, wiring
+├── pkg/
+│   ├── device/
+│   │   ├── manager.go        # device discovery and lifecycle management
+│   │   ├── hidraw.go         # SteelSeries HID driver (raw USB)
+│   │   ├── openrazer.go      # Razer driver (D-Bus via OpenRazer)
+│   │   └── interface.go      # BatteryDevice interface
+│   ├── docker/
+│   │   └── monitor.go        # Docker container monitoring (polls docker ps)
+│   ├── protocol/
+│   │   └── handler.go        # HID protocol parser, DeviceState struct
+│   ├── ui/
+│   │   └── tray.go           # system tray menu, state display
+│   └── version/
+│       └── version.go        # build-time version injection
+├── docs/                     # additional documentation
+├── scripts/                  # helper scripts (systemd update, etc.)
+└── Makefile
+```
+
+## Documentation
+
+- **[Code Structure](docs/code_structure.md)**: Package organization and design principles
+- **[How It Works](docs/how_it_works.md)**: HID communication, protocol parsing, and system tray integration
+
+## License
+
+MIT

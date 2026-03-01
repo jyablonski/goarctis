@@ -15,6 +15,12 @@ type DeviceManager struct {
 	onChange func(string, protocol.DeviceState)
 }
 
+// DiscoveryConfig controls which device types to discover
+type DiscoveryConfig struct {
+	DisableGameBuds bool
+	DisableRazer    bool
+}
+
 // NewDeviceManager creates a new device manager
 func NewDeviceManager() *DeviceManager {
 	return &DeviceManager{
@@ -30,30 +36,38 @@ func (dm *DeviceManager) SetOnStateChange(callback func(string, protocol.DeviceS
 	dm.mu.Unlock()
 }
 
-// DiscoverDevices discovers all supported devices
-func (dm *DeviceManager) DiscoverDevices() error {
+// DiscoverDevices discovers all supported devices, respecting the provided config
+func (dm *DeviceManager) DiscoverDevices(cfg DiscoveryConfig) error {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
 	// Discover SteelSeries GameBuds
-	steelSeriesDevice := NewHIDRawManager()
-	if err := steelSeriesDevice.FindDevices(); err != nil {
-		log.Printf("SteelSeries GameBuds not found: %v", err)
+	if cfg.DisableGameBuds {
+		log.Println("SteelSeries GameBuds discovery disabled")
 	} else {
-		steelSeriesDevice.SetOnStateChange(dm.makeStateChangeHandler(steelSeriesDevice.GetID()))
-		dm.devices[steelSeriesDevice.GetID()] = steelSeriesDevice
-		log.Printf("Found %s", steelSeriesDevice.GetName())
+		steelSeriesDevice := NewHIDRawManager()
+		if err := steelSeriesDevice.FindDevices(); err != nil {
+			log.Printf("SteelSeries GameBuds not found: %v", err)
+		} else {
+			steelSeriesDevice.SetOnStateChange(dm.makeStateChangeHandler(steelSeriesDevice.GetID()))
+			dm.devices[steelSeriesDevice.GetID()] = steelSeriesDevice
+			log.Printf("Found %s", steelSeriesDevice.GetName())
+		}
 	}
 
 	// Discover Razer devices
-	razerDevices, err := DiscoverRazerDevices()
-	if err != nil {
-		log.Printf("Razer devices not found or OpenRazer not available: %v", err)
+	if cfg.DisableRazer {
+		log.Println("Razer device discovery disabled")
 	} else {
-		for _, razerDevice := range razerDevices {
-			razerDevice.SetOnStateChange(dm.makeStateChangeHandler(razerDevice.GetID()))
-			dm.devices[razerDevice.GetID()] = razerDevice
-			log.Printf("Found %s", razerDevice.GetName())
+		razerDevices, err := DiscoverRazerDevices()
+		if err != nil {
+			log.Printf("Razer devices not found or OpenRazer not available: %v", err)
+		} else {
+			for _, razerDevice := range razerDevices {
+				razerDevice.SetOnStateChange(dm.makeStateChangeHandler(razerDevice.GetID()))
+				dm.devices[razerDevice.GetID()] = razerDevice
+				log.Printf("Found %s", razerDevice.GetName())
+			}
 		}
 	}
 

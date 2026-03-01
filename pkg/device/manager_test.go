@@ -110,6 +110,35 @@ func TestStartAll_NoDevices(t *testing.T) {
 	}
 }
 
+func TestDiscoveryConfig_Defaults(t *testing.T) {
+	cfg := DiscoveryConfig{}
+
+	if cfg.DisableGameBuds {
+		t.Error("DisableGameBuds should default to false")
+	}
+	if cfg.DisableRazer {
+		t.Error("DisableRazer should default to false")
+	}
+}
+
+func TestDiscoverDevices_AllDisabled(t *testing.T) {
+	dm := NewDeviceManager()
+
+	cfg := DiscoveryConfig{
+		DisableGameBuds: true,
+		DisableRazer:    true,
+	}
+
+	err := dm.DiscoverDevices(cfg)
+	if err == nil {
+		t.Error("DiscoverDevices should return error when all device types are disabled")
+	}
+
+	if len(dm.devices) != 0 {
+		t.Errorf("Expected 0 devices when all disabled, got %d", len(dm.devices))
+	}
+}
+
 func TestDeviceManager_GetDeviceStates_WithDevices(t *testing.T) {
 	dm := NewDeviceManager()
 

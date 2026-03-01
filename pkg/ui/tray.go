@@ -6,9 +6,16 @@ import (
 	"sync"
 
 	"github.com/getlantern/systray"
+	"github.com/jyablonski/goarctis/pkg/docker"
 	"github.com/jyablonski/goarctis/pkg/protocol"
 	"github.com/jyablonski/goarctis/pkg/version"
 )
+
+// TrayConfig holds configuration for which sections to display in the tray menu.
+type TrayConfig struct {
+	DisableGameBuds bool
+	DisableRazer    bool
+}
 
 type TrayManager struct {
 	mStatus *systray.MenuItem
@@ -23,9 +30,18 @@ type TrayManager struct {
 	razerBattery  *systray.MenuItem
 	razerCharging *systray.MenuItem
 
+	// Docker menu items
+	dockerMenu    *systray.MenuItem
+	dockerStatus  *systray.MenuItem
+	dockerStopAll *systray.MenuItem
+
+	// Configuration
+	config TrayConfig
+
 	// State tracking
-	devices map[string]protocol.DeviceState
-	mu      sync.RWMutex
+	devices     map[string]protocol.DeviceState
+	dockerState docker.DockerState
+	mu          sync.RWMutex
 }
 
 func NewTrayManager() *TrayManager {
@@ -34,7 +50,9 @@ func NewTrayManager() *TrayManager {
 	}
 }
 
-func (t *TrayManager) Initialize() {
+func (t *TrayManager) Initialize(cfg TrayConfig) {
+	t.config = cfg
+
 	systray.SetTitle("🎧")
 	systray.SetTooltip(fmt.Sprintf("Battery Monitor (v%s)", version.Version))
 
@@ -42,27 +60,38 @@ func (t *TrayManager) Initialize() {
 	t.mStatus = systray.AddMenuItem("Initializing...", "Connection status")
 	t.mStatus.Disable()
 
+	// GameBuds section (only added if not disabled)
+	if !cfg.DisableGameBuds {
+		systray.AddSeparator()
+		t.gameBudsMenu = systray.AddMenuItem("🎧 GameBuds", "SteelSeries Arctis GameBuds")
+		t.gameBudsMenu.Disable()
+		t.gameBudsLeft = systray.AddMenuItem("  Left: --", "Left earbud battery")
+		t.gameBudsLeft.Disable()
+		t.gameBudsRight = systray.AddMenuItem("  Right: --", "Right earbud battery")
+		t.gameBudsRight.Disable()
+		t.gameBudsANC = systray.AddMenuItem("  ANC: Unknown", "Noise cancellation mode")
+		t.gameBudsANC.Disable()
+	}
+
+	// Razer section (only added if not disabled)
+	if !cfg.DisableRazer {
+		systray.AddSeparator()
+		t.razerMenu = systray.AddMenuItem("🖱️ Razer Device", "Razer Device")
+		t.razerMenu.Disable()
+		t.razerBattery = systray.AddMenuItem("  Battery: --", "Battery level")
+		t.razerBattery.Disable()
+		t.razerCharging = systray.AddMenuItem("  Charging: --", "Charging status")
+		t.razerCharging.Disable()
+	}
+
+	// Docker section
 	systray.AddSeparator()
-
-	// GameBuds section (initially hidden)
-	t.gameBudsMenu = systray.AddMenuItem("🎧 GameBuds", "SteelSeries Arctis GameBuds")
-	t.gameBudsMenu.Disable()
-	t.gameBudsLeft = systray.AddMenuItem("  Left: --", "Left earbud battery")
-	t.gameBudsLeft.Disable()
-	t.gameBudsRight = systray.AddMenuItem("  Right: --", "Right earbud battery")
-	t.gameBudsRight.Disable()
-	t.gameBudsANC = systray.AddMenuItem("  ANC: Unknown", "Noise cancellation mode")
-	t.gameBudsANC.Disable()
-
-	systray.AddSeparator()
-
-	// Razer section (initially hidden)
-	t.razerMenu = systray.AddMenuItem("🖱️ Razer Device", "Razer Device")
-	t.razerMenu.Disable()
-	t.razerBattery = systray.AddMenuItem("  Battery: --", "Battery level")
-	t.razerBattery.Disable()
-	t.razerCharging = systray.AddMenuItem("  Charging: --", "Charging status")
-	t.razerCharging.Disable()
+	t.dockerMenu = systray.AddMenuItem("🐳 Docker", "Docker container status")
+	t.dockerMenu.Disable()
+	t.dockerStatus = systray.AddMenuItem("  Containers: checking...", "Running container count")
+	t.dockerStatus.Disable()
+	t.dockerStopAll = systray.AddMenuItem("  Stop All Containers", "Stop all running Docker containers")
+	t.dockerStopAll.Hide()
 
 	systray.AddSeparator()
 	t.mQuit = systray.AddMenuItem("Quit", "Quit goarctis")
@@ -92,6 +121,9 @@ func (t *TrayManager) UpdateDeviceState(deviceID string, state protocol.DeviceSt
 }
 
 func (t *TrayManager) updateGameBuds(state protocol.DeviceState) {
+	if t.gameBudsMenu == nil {
+		return
+	}
 	// Show GameBuds menu
 	t.gameBudsMenu.SetTitle("🎧 GameBuds")
 	t.gameBudsMenu.Enable()
@@ -117,6 +149,9 @@ func (t *TrayManager) updateGameBuds(state protocol.DeviceState) {
 }
 
 func (t *TrayManager) updateRazer(state protocol.DeviceState) {
+	if t.razerMenu == nil {
+		return
+	}
 	// Show Razer menu
 	t.razerMenu.SetTitle("🖱️ Razer Device")
 	t.razerMenu.Enable()
@@ -233,6 +268,13 @@ func (t *TrayManager) updateTrayIcon() {
 		}
 	}
 
+	// Show Docker container count if any are running
+	dockerCount := t.dockerState.RunningCount()
+	if dockerCount > 0 {
+		titleParts = append(titleParts, fmt.Sprintf("🐳 %d", dockerCount))
+		tooltipParts = append(tooltipParts, fmt.Sprintf("Docker: %d container(s)", dockerCount))
+	}
+
 	// Update tray icon
 	if len(titleParts) == 0 {
 		systray.SetTitle("🎧")
@@ -259,6 +301,71 @@ func (t *TrayManager) updateTrayIcon() {
 		tooltip += fmt.Sprintf(" (v%s)", version.Version)
 		systray.SetTooltip(tooltip)
 	}
+}
+
+// UpdateDockerState updates the Docker section of the tray menu
+func (t *TrayManager) UpdateDockerState(state docker.DockerState) {
+	t.mu.Lock()
+	t.dockerState = state
+	t.mu.Unlock()
+
+	if t.dockerMenu == nil {
+		return
+	}
+
+	if !state.Available {
+		t.dockerMenu.SetTitle("🐳 Docker (unavailable)")
+		t.dockerStatus.SetTitle("  Docker not running")
+		t.dockerStopAll.Hide()
+		return
+	}
+
+	count := state.RunningCount()
+	if count == 0 {
+		t.dockerMenu.SetTitle("🐳 Docker")
+		t.dockerStatus.SetTitle("  No containers running")
+		t.dockerStopAll.Hide()
+	} else {
+		t.dockerMenu.SetTitle(fmt.Sprintf("🐳 Docker (%d running)", count))
+		// List container names
+		names := make([]string, 0, len(state.Containers))
+		for _, c := range state.Containers {
+			names = append(names, c.Name)
+		}
+		t.dockerStatus.SetTitle(fmt.Sprintf("  Running: %s", joinNames(names, 3)))
+		t.dockerStopAll.Show()
+		t.dockerStopAll.Enable()
+	}
+
+	log.Printf("Docker state updated: available=%v, containers=%d", state.Available, count)
+}
+
+// DockerStopAllChannel returns the channel that receives clicks on "Stop All Containers"
+func (t *TrayManager) DockerStopAllChannel() <-chan struct{} {
+	return t.dockerStopAll.ClickedCh
+}
+
+// joinNames joins container names, truncating with "+N more" if there are too many
+func joinNames(names []string, max int) string {
+	if len(names) <= max {
+		result := ""
+		for i, n := range names {
+			if i > 0 {
+				result += ", "
+			}
+			result += n
+		}
+		return result
+	}
+	result := ""
+	for i := 0; i < max; i++ {
+		if i > 0 {
+			result += ", "
+		}
+		result += names[i]
+	}
+	result += fmt.Sprintf(" +%d more", len(names)-max)
+	return result
 }
 
 func formatGameBudsBattery(battery *int, status *protocol.EarbudStatus, side string) string {

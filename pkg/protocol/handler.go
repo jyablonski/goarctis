@@ -172,24 +172,61 @@ func (h *Handler) ParseReport(data []byte) error {
 	reportID := data[0]
 	oldState := h.copyState()
 
+	// Handle reports with ID 0x00 - might be reports without explicit ID or different format
+	if reportID == 0x00 && len(data) >= 2 {
+		// Try checking if the actual report ID is in a different position
+		// Some HID devices put the report ID in byte 1 or embed it differently
+		// Check multiple positions for embedded report IDs
+		for offset := 1; offset < len(data) && offset < 4; offset++ {
+			possibleID := data[offset]
+			if possibleID == ReportBattery || possibleID == ReportWearStatus ||
+				possibleID == ReportANCMode || possibleID == ReportInEarEvent {
+				log.Printf("🎧 GameBuds: Found embedded report ID 0x%02X at offset %d, data: %x", possibleID, offset, data)
+				// Try parsing with the embedded ID
+				reportID = possibleID
+				break
+			}
+		}
+
+		// If no embedded report ID found, this might be a button/control event
+		if reportID == 0x00 {
+			// The pattern 00020000 / 00000000 suggests button press/release
+			// This is likely a media control event (pause/play) - not a status report
+			// Log but don't parse as known report type
+			if len(data) >= 2 && data[1] == 0x02 {
+				log.Printf("🎧 GameBuds: Report 0x00 received (button/control event - pause detected): %x", data)
+			} else {
+				log.Printf("🎧 GameBuds: Report 0x00 received (button/control event): %x", data)
+			}
+			return nil
+		}
+	}
+
 	switch reportID {
 	case ReportBattery:
+		log.Printf("🎧 GameBuds: Parsing battery report (0x%02X)", reportID)
 		h.parseBattery(data)
 	case ReportWearStatus:
+		log.Printf("🎧 GameBuds: Parsing wear status report (0x%02X)", reportID)
 		h.parseWearStatus(data)
 	case ReportANCMode:
+		log.Printf("🎧 GameBuds: Parsing ANC mode report (0x%02X)", reportID)
 		h.parseANCMode(data)
 	case ReportInEarEvent:
+		log.Printf("🎧 GameBuds: Parsing in-ear event report (0x%02X)", reportID)
 		h.parseInEarEvent(data)
 	default:
 		// Unknown report, log for discovery
-		log.Printf("Unknown report 0x%02X: %x", reportID, data)
+		log.Printf("🎧 GameBuds: Unknown report 0x%02X: %x", reportID, data)
 		return nil
 	}
 
 	// If state changed, trigger callback
 	if h.onChange != nil && !h.statesEqual(oldState, h.state) {
+		log.Printf("🎧 GameBuds: State changed, triggering callback")
 		h.onChange(h.state)
+	} else if h.onChange != nil {
+		log.Printf("🎧 GameBuds: State unchanged after parsing report 0x%02X", reportID)
 	}
 
 	return nil
@@ -275,8 +312,22 @@ func (h *Handler) parseBattery(data []byte) {
 		return
 	}
 
-	leftBattery := int(data[1])
-	rightBattery := int(data[2])
+	// Handle reports where report ID might be at offset 0
+	// If data[0] is the report ID (0xB7), battery data starts at offset 1
+	// If data[0] is 0x00, check if report ID is embedded elsewhere
+	offset := 1
+	if len(data) > 0 && data[0] == 0xB7 {
+		offset = 1 // Report ID at start, data follows
+	} else if len(data) > 1 && data[1] == 0xB7 {
+		offset = 2 // Report ID at offset 1, data follows
+	}
+
+	if len(data) < offset+2 {
+		return
+	}
+
+	leftBattery := int(data[offset])
+	rightBattery := int(data[offset+1])
 
 	// Only update battery if it's a valid reading (not 0 unless actually dead)
 	// When an earbud is in the case, the device sometimes reports 0

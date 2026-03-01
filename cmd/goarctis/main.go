@@ -7,22 +7,29 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/getlantern/systray"
 	"github.com/jyablonski/goarctis/pkg/device"
+	"github.com/jyablonski/goarctis/pkg/docker"
 	"github.com/jyablonski/goarctis/pkg/protocol"
 	"github.com/jyablonski/goarctis/pkg/ui"
 	"github.com/jyablonski/goarctis/pkg/version"
 )
 
 var (
-	deviceManager *device.DeviceManager
-	trayManager   *ui.TrayManager
+	deviceManager   *device.DeviceManager
+	trayManager     *ui.TrayManager
+	dockerMonitor   *docker.Monitor
+	disableGameBuds bool
+	disableRazer    bool
 )
 
 func main() {
 	// Parse command line flags
 	showVersion := flag.Bool("version", false, "Print version and exit")
+	flag.BoolVar(&disableGameBuds, "disable-gamebuds", false, "Disable SteelSeries GameBuds monitoring")
+	flag.BoolVar(&disableRazer, "disable-razer", false, "Disable Razer device monitoring")
 	flag.Parse()
 
 	if *showVersion {
@@ -50,7 +57,10 @@ func main() {
 func onReady() {
 	// Initialize UI
 	trayManager = ui.NewTrayManager()
-	trayManager.Initialize()
+	trayManager.Initialize(ui.TrayConfig{
+		DisableGameBuds: disableGameBuds,
+		DisableRazer:    disableRazer,
+	})
 
 	// Initialize device manager
 	deviceManager = device.NewDeviceManager()
@@ -58,7 +68,10 @@ func onReady() {
 
 	// Discover and start devices
 	go func() {
-		if err := deviceManager.DiscoverDevices(); err != nil {
+		if err := deviceManager.DiscoverDevices(device.DiscoveryConfig{
+			DisableGameBuds: disableGameBuds,
+			DisableRazer:    disableRazer,
+		}); err != nil {
 			log.Printf("Failed to discover devices: %v", err)
 			trayManager.SetStatus("No devices found")
 			return
@@ -83,6 +96,27 @@ func onReady() {
 		}
 	}()
 
+	// Initialize Docker monitor (poll every 10 seconds)
+	dockerMonitor = docker.NewMonitor(10 * time.Second)
+	dockerMonitor.SetOnChange(func(state docker.DockerState) {
+		trayManager.UpdateDockerState(state)
+	})
+	dockerMonitor.Start()
+
+	// Handle "Stop All Containers" button
+	go func() {
+		runner := &docker.ExecCommandRunner{}
+		for range trayManager.DockerStopAllChannel() {
+			log.Println("Stopping all Docker containers...")
+			stopped, err := docker.StopAllContainers(runner)
+			if err != nil {
+				log.Printf("Error stopping containers: %v", err)
+			} else {
+				log.Printf("Stopped %d container(s)", stopped)
+			}
+		}
+	}()
+
 	// Handle quit button
 	go func() {
 		<-trayManager.QuitChannel()
@@ -97,6 +131,11 @@ func onStateChange(deviceID string, state protocol.DeviceState) {
 
 func cleanup() {
 	log.Println("Cleaning up...")
+
+	if dockerMonitor != nil {
+		log.Println("Stopping Docker monitor")
+		dockerMonitor.Stop()
+	}
 
 	if deviceManager != nil {
 		log.Println("Closing all devices")

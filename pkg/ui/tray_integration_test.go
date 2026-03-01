@@ -3,6 +3,7 @@ package ui
 import (
 	"testing"
 
+	"github.com/jyablonski/goarctis/pkg/docker"
 	"github.com/jyablonski/goarctis/pkg/protocol"
 )
 
@@ -107,5 +108,74 @@ func TestFormatGameBudsBattery_EdgeCases(t *testing.T) {
 				t.Errorf("formatGameBudsBattery() = %v, want %v", result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestTrayManager_UpdateDockerState_WithoutInitialize(t *testing.T) {
+	manager := NewTrayManager()
+
+	// UpdateDockerState should not panic when called before Initialize
+	state := docker.DockerState{
+		Available: true,
+		Containers: []docker.ContainerInfo{
+			{ID: "abc123", Name: "web"},
+		},
+	}
+	manager.UpdateDockerState(state)
+
+	// Verify docker state is tracked in the manager
+	manager.mu.RLock()
+	stored := manager.dockerState
+	manager.mu.RUnlock()
+
+	if !stored.Available {
+		t.Error("Docker state should be available")
+	}
+	if stored.RunningCount() != 1 {
+		t.Errorf("Docker RunningCount = %d, want 1", stored.RunningCount())
+	}
+}
+
+func TestTrayManager_DockerState_WithDevices(t *testing.T) {
+	manager := NewTrayManager()
+
+	// Add device state
+	leftBattery := 50
+	rightBattery := 60
+	deviceState := protocol.DeviceState{
+		DeviceID:     "steelseries_gamebuds",
+		DeviceType:   "steelseries_gamebuds",
+		LeftBattery:  &leftBattery,
+		RightBattery: &rightBattery,
+		IsConnected:  true,
+	}
+
+	manager.mu.Lock()
+	manager.devices["steelseries_gamebuds"] = deviceState
+	manager.mu.Unlock()
+
+	// Add Docker state
+	dockerState := docker.DockerState{
+		Available: true,
+		Containers: []docker.ContainerInfo{
+			{ID: "abc123", Name: "web"},
+			{ID: "def456", Name: "db"},
+		},
+	}
+	manager.mu.Lock()
+	manager.dockerState = dockerState
+	manager.mu.Unlock()
+
+	// Verify both states are tracked
+	manager.mu.RLock()
+	deviceCount := len(manager.devices)
+	dockerCount := manager.dockerState.RunningCount()
+	manager.mu.RUnlock()
+
+	if deviceCount != 1 {
+		t.Errorf("Expected 1 device, got %d", deviceCount)
+	}
+	if dockerCount != 2 {
+		t.Errorf("Expected 2 Docker containers, got %d", dockerCount)
 	}
 }
