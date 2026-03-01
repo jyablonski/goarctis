@@ -273,3 +273,134 @@ func BenchmarkGetANCIcon(b *testing.B) {
 		getANCIcon(protocol.ANCActive)
 	}
 }
+
+func TestJoinNames(t *testing.T) {
+	tests := []struct {
+		name     string
+		names    []string
+		max      int
+		expected string
+	}{
+		{
+			name:     "Empty list",
+			names:    []string{},
+			max:      3,
+			expected: "",
+		},
+		{
+			name:     "Single name",
+			names:    []string{"web"},
+			max:      3,
+			expected: "web",
+		},
+		{
+			name:     "Under limit",
+			names:    []string{"web", "db"},
+			max:      3,
+			expected: "web, db",
+		},
+		{
+			name:     "At limit",
+			names:    []string{"web", "db", "redis"},
+			max:      3,
+			expected: "web, db, redis",
+		},
+		{
+			name:     "Over limit",
+			names:    []string{"web", "db", "redis", "worker", "scheduler"},
+			max:      3,
+			expected: "web, db, redis +2 more",
+		},
+		{
+			name:     "One over limit",
+			names:    []string{"web", "db", "redis", "worker"},
+			max:      3,
+			expected: "web, db, redis +1 more",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := joinNames(tt.names, tt.max)
+			if got != tt.expected {
+				t.Errorf("joinNames(%v, %d) = %q, want %q", tt.names, tt.max, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNewTrayManager_DockerFields(t *testing.T) {
+	manager := NewTrayManager()
+
+	if manager == nil {
+		t.Fatal("NewTrayManager returned nil")
+	}
+
+	// Docker menu items should be nil before Initialize
+	if manager.dockerMenu != nil {
+		t.Error("dockerMenu should be nil before Initialize")
+	}
+	if manager.dockerStatus != nil {
+		t.Error("dockerStatus should be nil before Initialize")
+	}
+	if manager.dockerStopAll != nil {
+		t.Error("dockerStopAll should be nil before Initialize")
+	}
+}
+
+func TestTrayConfig_Defaults(t *testing.T) {
+	cfg := TrayConfig{}
+
+	if cfg.DisableGameBuds {
+		t.Error("DisableGameBuds should default to false")
+	}
+	if cfg.DisableRazer {
+		t.Error("DisableRazer should default to false")
+	}
+}
+
+func TestTrayManager_DisabledGameBuds_NilGuard(t *testing.T) {
+	manager := NewTrayManager()
+
+	// Simulate disabled GameBuds: menu items remain nil (as if Initialize
+	// was called with DisableGameBuds=true, which skips creating them)
+	// The updateGameBuds method should safely return without panicking.
+	leftBattery := 80
+	rightBattery := 70
+	state := protocol.DeviceState{
+		DeviceID:     "steelseries_gamebuds",
+		DeviceType:   "steelseries_gamebuds",
+		LeftBattery:  &leftBattery,
+		RightBattery: &rightBattery,
+		IsConnected:  true,
+	}
+
+	// This should not panic even though gameBudsMenu is nil
+	manager.updateGameBuds(state)
+
+	// Also verify that gameBuds fields are still nil
+	if manager.gameBudsMenu != nil {
+		t.Error("gameBudsMenu should remain nil when disabled")
+	}
+}
+
+func TestTrayManager_DisabledRazer_NilGuard(t *testing.T) {
+	manager := NewTrayManager()
+
+	// Simulate disabled Razer: menu items remain nil
+	battery := 70
+	state := protocol.DeviceState{
+		DeviceID:    "razer-device",
+		DeviceType:  "razer_deathadder",
+		Battery:     &battery,
+		IsConnected: true,
+	}
+
+	// This should not panic even though razerMenu is nil
+	manager.updateRazer(state)
+
+	// Also verify that razer fields are still nil
+	if manager.razerMenu != nil {
+		t.Error("razerMenu should remain nil when disabled")
+	}
+}
