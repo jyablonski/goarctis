@@ -1,6 +1,6 @@
 # goarctis
 
-![CI Pipeline](https://github.com/jyablonski/goarctis/actions/workflows/ci.yaml/badge.svg)
+![CI CD Pipeline](https://github.com/jyablonski/goarctis/actions/workflows/ci_cd.yaml/badge.svg)
 
 A Linux system tray application for monitoring battery levels of wireless peripherals and Docker containers.
 
@@ -74,6 +74,7 @@ sudo pacman -S libayatana-appindicator gtk3 pkgconf
 | Flag | Description | Example |
 | --- | --- | --- |
 | `--version` | Print version and exit | `goarctis --version` |
+| `--self-update` | Update to the latest release and restart the service | `goarctis --self-update` |
 | `--disable-gamebuds` | Skip GameBuds monitoring | `goarctis --disable-gamebuds` |
 | `--disable-razer` | Skip Razer device monitoring | `goarctis --disable-razer` |
 
@@ -116,6 +117,18 @@ systemctl --user start goarctis.service
 
 Or use the provided script: `./scripts/update_systemd.sh`
 
+## Updating
+
+To update goarctis to the latest release:
+
+```bash
+goarctis --self-update
+```
+
+This checks the latest GitHub release, downloads the new binary, replaces the current one in place, and runs `systemctl --user restart goarctis.service` to pick up the change. If the version is already up to date it exits early.
+
+Skipped automatically on dev builds (no version set via ldflags).
+
 ## Development
 
 ```bash
@@ -152,6 +165,8 @@ This validates semver format, checks for a clean working directory and duplicate
 │   │   └── monitor.go        # Docker container monitoring (polls docker ps)
 │   ├── protocol/
 │   │   └── handler.go        # HID protocol parser, DeviceState struct
+│   ├── selfupdate/
+│   │   └── selfupdate.go     # self-update via GitHub releases
 │   ├── ui/
 │   │   └── tray.go           # system tray menu, state display
 │   └── version/

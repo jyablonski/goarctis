@@ -13,6 +13,7 @@ import (
 	"github.com/jyablonski/goarctis/pkg/device"
 	"github.com/jyablonski/goarctis/pkg/docker"
 	"github.com/jyablonski/goarctis/pkg/protocol"
+	"github.com/jyablonski/goarctis/pkg/selfupdate"
 	"github.com/jyablonski/goarctis/pkg/ui"
 	"github.com/jyablonski/goarctis/pkg/version"
 )
@@ -28,12 +29,21 @@ var (
 func main() {
 	// Parse command line flags
 	showVersion := flag.Bool("version", false, "Print version and exit")
+	doSelfUpdate := flag.Bool("self-update", false, "Update goarctis to the latest release and restart the service")
 	flag.BoolVar(&disableGameBuds, "disable-gamebuds", false, "Disable SteelSeries GameBuds monitoring")
 	flag.BoolVar(&disableRazer, "disable-razer", false, "Disable Razer device monitoring")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Printf("goarctis version %s\n", version.Version)
+		os.Exit(0)
+	}
+
+	if *doSelfUpdate {
+		if err := selfupdate.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "self-update failed: %v\n", err)
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 
