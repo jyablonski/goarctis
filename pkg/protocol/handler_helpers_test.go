@@ -72,19 +72,16 @@ func TestParseInEarEvent(t *testing.T) {
 		callbackCalled = true
 	})
 
-	// Test earbud removed
 	err := h.ParseReport([]byte{ReportInEarEvent, 1})
 	if err != nil {
 		t.Errorf("ParseReport for InEarEvent returned error: %v", err)
 	}
 
-	// Test earbud placed
 	err = h.ParseReport([]byte{ReportInEarEvent, 0})
 	if err != nil {
 		t.Errorf("ParseReport for InEarEvent returned error: %v", err)
 	}
 
-	// InEarEvent doesn't change state, so callback shouldn't be called
 	if callbackCalled {
 		t.Error("InEarEvent should not trigger state change callback")
 	}

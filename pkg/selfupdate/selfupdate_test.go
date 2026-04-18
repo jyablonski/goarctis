@@ -26,7 +26,6 @@ func TestCompareVersions(t *testing.T) {
 		{"v1.2.4", "v1.2.3", 1},
 		{"v2.0.0", "v1.99.99", 1},
 		{"v0.0.1", "v0.0.2", -1},
-		// Different segment lengths
 		{"v1.0", "v1.0.0", 0},
 		{"v1.0.0", "v1.0", 0},
 		{"v1.0", "v1.0.1", -1},
@@ -43,7 +42,6 @@ func TestCompareVersions(t *testing.T) {
 }
 
 func TestDownloadAndReplace(t *testing.T) {
-	// Create a fake binary to serve
 	fakeContent := []byte("#!/bin/sh\necho new-version\n")
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -52,7 +50,6 @@ func TestDownloadAndReplace(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Create a temp directory with a fake "binary" to replace
 	tmpDir := t.TempDir()
 	execPath := filepath.Join(tmpDir, "goarctis")
 
@@ -60,12 +57,10 @@ func TestDownloadAndReplace(t *testing.T) {
 		t.Fatalf("failed to write fake binary: %v", err)
 	}
 
-	// Run the download-and-replace
 	if err := downloadAndReplace(execPath, server.URL+"/goarctis-linux-amd64"); err != nil {
 		t.Fatalf("downloadAndReplace failed: %v", err)
 	}
 
-	// Verify the binary was replaced
 	data, err := os.ReadFile(execPath)
 	if err != nil {
 		t.Fatalf("failed to read replaced binary: %v", err)
@@ -75,7 +70,6 @@ func TestDownloadAndReplace(t *testing.T) {
 		t.Errorf("binary content mismatch: got %q, want %q", string(data), string(fakeContent))
 	}
 
-	// Verify it's executable
 	info, err := os.Stat(execPath)
 	if err != nil {
 		t.Fatalf("failed to stat replaced binary: %v", err)
@@ -118,7 +112,6 @@ func TestGetLatestRelease(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Override the GitHub API URL for testing
 	originalAPI := githubAPI
 	githubAPI = server.URL
 	defer func() { githubAPI = originalAPI }()

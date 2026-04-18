@@ -9,16 +9,10 @@ import (
 
 func TestTrayManager_SetStatus(t *testing.T) {
 	manager := NewTrayManager()
-	// Note: Initialize() requires systray to be running, so we can't test it fully
-	// But we can test the method exists and doesn't panic
 	if manager == nil {
 		t.Fatal("NewTrayManager returned nil")
 	}
 }
-
-// Note: UI tests that require systray initialization are skipped
-// as they require a running GUI environment. These tests verify
-// the logic without actually initializing the systray.
 
 func TestTrayManager_UpdateDeviceState_GameBuds(t *testing.T) {
 	t.Skip("Requires systray initialization - tested manually")
@@ -31,7 +25,6 @@ func TestTrayManager_UpdateDeviceState_Razer(t *testing.T) {
 func TestTrayManager_UpdateDeviceState_Multiple(t *testing.T) {
 	manager := NewTrayManager()
 
-	// Test device tracking without systray initialization
 	leftBattery := 50
 	rightBattery := 60
 	state1 := protocol.DeviceState{
@@ -42,12 +35,10 @@ func TestTrayManager_UpdateDeviceState_Multiple(t *testing.T) {
 		IsConnected:  true,
 	}
 
-	// Update state directly in map (bypassing systray calls)
 	manager.mu.Lock()
 	manager.devices["steelseries_gamebuds"] = state1
 	manager.mu.Unlock()
 
-	// Add Razer
 	battery := 70
 	state2 := protocol.DeviceState{
 		DeviceID:    "razer-device",
@@ -60,7 +51,6 @@ func TestTrayManager_UpdateDeviceState_Multiple(t *testing.T) {
 	manager.devices["razer-device"] = state2
 	manager.mu.Unlock()
 
-	// Should have both devices
 	manager.mu.RLock()
 	deviceCount := len(manager.devices)
 	manager.mu.RUnlock()
@@ -114,7 +104,6 @@ func TestFormatGameBudsBattery_EdgeCases(t *testing.T) {
 func TestTrayManager_UpdateDockerState_WithoutInitialize(t *testing.T) {
 	manager := NewTrayManager()
 
-	// UpdateDockerState should not panic when called before Initialize
 	state := docker.DockerState{
 		Available: true,
 		Containers: []docker.ContainerInfo{
@@ -123,7 +112,6 @@ func TestTrayManager_UpdateDockerState_WithoutInitialize(t *testing.T) {
 	}
 	manager.UpdateDockerState(state)
 
-	// Verify docker state is tracked in the manager
 	manager.mu.RLock()
 	stored := manager.dockerState
 	manager.mu.RUnlock()
@@ -139,7 +127,6 @@ func TestTrayManager_UpdateDockerState_WithoutInitialize(t *testing.T) {
 func TestTrayManager_DockerState_WithDevices(t *testing.T) {
 	manager := NewTrayManager()
 
-	// Add device state
 	leftBattery := 50
 	rightBattery := 60
 	deviceState := protocol.DeviceState{
@@ -154,7 +141,6 @@ func TestTrayManager_DockerState_WithDevices(t *testing.T) {
 	manager.devices["steelseries_gamebuds"] = deviceState
 	manager.mu.Unlock()
 
-	// Add Docker state
 	dockerState := docker.DockerState{
 		Available: true,
 		Containers: []docker.ContainerInfo{
@@ -166,7 +152,6 @@ func TestTrayManager_DockerState_WithDevices(t *testing.T) {
 	manager.dockerState = dockerState
 	manager.mu.Unlock()
 
-	// Verify both states are tracked
 	manager.mu.RLock()
 	deviceCount := len(manager.devices)
 	dockerCount := manager.dockerState.RunningCount()

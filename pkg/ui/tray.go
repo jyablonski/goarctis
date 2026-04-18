@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/getlantern/systray"
@@ -11,17 +12,16 @@ import (
 	"github.com/jyablonski/goarctis/pkg/version"
 )
 
-// TrayConfig holds configuration for which sections to display in the tray menu.
 type TrayConfig struct {
 	DisableGameBuds bool
 	DisableRazer    bool
+	DisableHyperX   bool
 }
 
 type TrayManager struct {
 	mStatus *systray.MenuItem
 	mQuit   *systray.MenuItem
 
-	// Device-specific menu items
 	gameBudsMenu  *systray.MenuItem
 	gameBudsLeft  *systray.MenuItem
 	gameBudsRight *systray.MenuItem
@@ -30,15 +30,15 @@ type TrayManager struct {
 	razerBattery  *systray.MenuItem
 	razerCharging *systray.MenuItem
 
-	// Docker menu items
+	hyperxMenu    *systray.MenuItem
+	hyperxBattery *systray.MenuItem
+
 	dockerMenu    *systray.MenuItem
 	dockerStatus  *systray.MenuItem
 	dockerStopAll *systray.MenuItem
 
-	// Configuration
 	config TrayConfig
 
-	// State tracking
 	devices     map[string]protocol.DeviceState
 	dockerState docker.DockerState
 	mu          sync.RWMutex
@@ -56,35 +56,34 @@ func (t *TrayManager) Initialize(cfg TrayConfig) {
 	systray.SetTitle("🎧")
 	systray.SetTooltip(fmt.Sprintf("Battery Monitor (v%s)", version.Version))
 
-	// Status item
 	t.mStatus = systray.AddMenuItem("Initializing...", "Connection status")
 	t.mStatus.Disable()
 
-	// GameBuds section (only added if not disabled)
+	// GameBuds section. Hidden until the first state update arrives so the
+	// section disappears entirely when no GameBuds device is discovered.
 	if !cfg.DisableGameBuds {
 		systray.AddSeparator()
-		t.gameBudsMenu = systray.AddMenuItem("🎧 GameBuds", "SteelSeries Arctis GameBuds")
-		t.gameBudsMenu.Disable()
-		t.gameBudsLeft = systray.AddMenuItem("  Left: --", "Left earbud battery")
-		t.gameBudsLeft.Disable()
-		t.gameBudsRight = systray.AddMenuItem("  Right: --", "Right earbud battery")
-		t.gameBudsRight.Disable()
-		t.gameBudsANC = systray.AddMenuItem("  ANC: Unknown", "Noise cancellation mode")
-		t.gameBudsANC.Disable()
+		t.gameBudsMenu = addDisabledHiddenMenuItem("🎧 GameBuds", "SteelSeries Arctis GameBuds")
+		t.gameBudsLeft = addDisabledHiddenMenuItem("  Left: --", "Left earbud battery")
+		t.gameBudsRight = addDisabledHiddenMenuItem("  Right: --", "Right earbud battery")
+		t.gameBudsANC = addDisabledHiddenMenuItem("  ANC: Unknown", "Noise cancellation mode")
 	}
 
-	// Razer section (only added if not disabled)
 	if !cfg.DisableRazer {
 		systray.AddSeparator()
-		t.razerMenu = systray.AddMenuItem("🖱️ Razer Device", "Razer Device")
-		t.razerMenu.Disable()
-		t.razerBattery = systray.AddMenuItem("  Battery: --", "Battery level")
-		t.razerBattery.Disable()
-		t.razerCharging = systray.AddMenuItem("  Charging: --", "Charging status")
-		t.razerCharging.Disable()
+		t.razerMenu = addDisabledHiddenMenuItem("🖱️ Razer Device", "Razer Device")
+		t.razerBattery = addDisabledHiddenMenuItem("  Battery: --", "Battery level")
+		t.razerCharging = addDisabledHiddenMenuItem("  Charging: --", "Charging status")
 	}
 
-	// Docker section
+	// HyperX section (only added if not disabled). Hidden at startup until the
+	// first poll returns a connected state.
+	if !cfg.DisableHyperX {
+		systray.AddSeparator()
+		t.hyperxMenu = addDisabledHiddenMenuItem("🎧 HyperX Cloud Alpha Wireless", "HyperX Cloud Alpha Wireless")
+		t.hyperxBattery = addDisabledHiddenMenuItem("  Battery: --", "Battery level")
+	}
+
 	systray.AddSeparator()
 	t.dockerMenu = systray.AddMenuItem("🐳 Docker", "Docker container status")
 	t.dockerMenu.Disable()
@@ -108,37 +107,81 @@ func (t *TrayManager) UpdateDeviceState(deviceID string, state protocol.DeviceSt
 
 	log.Printf("State updated for %s: %s", deviceID, state)
 
-	// Update device-specific UI
 	switch state.DeviceType {
-	case "steelseries_gamebuds":
+	case protocol.DeviceTypeSteelSeriesGameBuds:
 		t.updateGameBuds(state)
-	case "razer_deathadder":
+	case protocol.DeviceTypeRazerDeathAdder:
 		t.updateRazer(state)
+	case protocol.DeviceTypeHyperXCloudAlpha:
+		t.updateHyperX(state)
 	}
 
-	// Update tray icon and tooltip
 	t.updateTrayIcon()
+}
+
+func addDisabledHiddenMenuItem(title, tooltip string) *systray.MenuItem {
+	item := systray.AddMenuItem(title, tooltip)
+	item.Disable()
+	item.Hide()
+	return item
+}
+
+func (t *TrayManager) gameBudsItems() []*systray.MenuItem {
+	return []*systray.MenuItem{t.gameBudsMenu, t.gameBudsLeft, t.gameBudsRight, t.gameBudsANC}
+}
+
+func (t *TrayManager) razerItems() []*systray.MenuItem {
+	return []*systray.MenuItem{t.razerMenu, t.razerBattery, t.razerCharging}
+}
+
+func (t *TrayManager) hyperxItems() []*systray.MenuItem {
+	return []*systray.MenuItem{t.hyperxMenu, t.hyperxBattery}
+}
+
+func showMenuItems(items ...*systray.MenuItem) {
+	for _, item := range items {
+		if item != nil {
+			item.Show()
+		}
+	}
+}
+
+func hideMenuItems(items ...*systray.MenuItem) {
+	for _, item := range items {
+		if item != nil {
+			item.Hide()
+		}
+	}
 }
 
 func (t *TrayManager) updateGameBuds(state protocol.DeviceState) {
 	if t.gameBudsMenu == nil {
 		return
 	}
-	// Show GameBuds menu
+
+	// The GameBuds handler hardcodes IsConnected = true as soon as a dongle
+	// is found, even before any earbud data has arrived. That leaves a ghost
+	// "Left: -- / Right: -- / ANC: Unknown" section whenever the dongle is
+	// plugged in but the earbuds aren't active. Require at least one piece
+	// of real data before showing the section.
+	if !isVisibleGameBudsState(state) {
+		hideMenuItems(t.gameBudsItems()...)
+		return
+	}
+
+	showMenuItems(t.gameBudsItems()...)
+
 	t.gameBudsMenu.SetTitle("🎧 GameBuds")
 	t.gameBudsMenu.Enable()
 
-	// Update Left battery
 	leftText := formatGameBudsBattery(state.LeftBattery, state.LeftStatus, "Left")
 	t.gameBudsLeft.SetTitle("  " + leftText)
 	t.gameBudsLeft.Enable()
 
-	// Update Right battery
 	rightText := formatGameBudsBattery(state.RightBattery, state.RightStatus, "Right")
 	t.gameBudsRight.SetTitle("  " + rightText)
 	t.gameBudsRight.Enable()
 
-	// Update ANC mode
 	ancText := "  ANC: Unknown"
 	if state.ANCMode != nil {
 		ancIcon := getANCIcon(*state.ANCMode)
@@ -152,20 +195,20 @@ func (t *TrayManager) updateRazer(state protocol.DeviceState) {
 	if t.razerMenu == nil {
 		return
 	}
-	// Show Razer menu
+
+	if !state.IsConnected {
+		hideMenuItems(t.razerItems()...)
+		return
+	}
+
+	showMenuItems(t.razerItems()...)
+
 	t.razerMenu.SetTitle("🖱️ Razer Device")
 	t.razerMenu.Enable()
 
-	// Update battery
-	batteryText := "  Battery: --"
-	if state.Battery != nil {
-		batteryIcon := getBatteryIcon(*state.Battery)
-		batteryText = fmt.Sprintf("  %s Battery: %d%%", batteryIcon, *state.Battery)
-	}
-	t.razerBattery.SetTitle(batteryText)
+	t.razerBattery.SetTitle(formatBatteryMenuTitle(state.Battery))
 	t.razerBattery.Enable()
 
-	// Update charging/wireless status
 	chargingText := "  Mode: --"
 	if state.IsCharging != nil {
 		if *state.IsCharging {
@@ -178,132 +221,103 @@ func (t *TrayManager) updateRazer(state protocol.DeviceState) {
 	t.razerCharging.Enable()
 }
 
+func (t *TrayManager) updateHyperX(state protocol.DeviceState) {
+	if t.hyperxMenu == nil {
+		return
+	}
+
+	if !state.IsConnected {
+		hideMenuItems(t.hyperxItems()...)
+		return
+	}
+
+	showMenuItems(t.hyperxItems()...)
+	t.hyperxMenu.Enable()
+
+	t.hyperxBattery.SetTitle(formatHyperXBatteryMenuTitle(state))
+	t.hyperxBattery.Enable()
+}
+
 func (t *TrayManager) updateTrayIcon() {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
 	var gameBudsBattery int = -1
 	var mouseBattery int = -1
+	var hyperxBattery int = -1
+	hyperxCharging := false
 	var tooltipParts []string
 	hasGameBuds := false
 	hasMouse := false
+	hasHyperX := false
 
 	for _, state := range t.devices {
 		switch state.DeviceType {
-		case "steelseries_gamebuds":
+		case protocol.DeviceTypeSteelSeriesGameBuds:
+			if !isVisibleGameBudsState(state) {
+				continue
+			}
 			hasGameBuds = true
-			// Get the lower of the two earbud batteries
-			// Prefer earbuds that are out/wearing, but fall back to any available battery
-			var validBatteries []int
-			var allBatteries []int
-
-			if state.LeftBattery != nil && *state.LeftBattery > 0 {
-				allBatteries = append(allBatteries, *state.LeftBattery)
-				leftStatus := protocol.StatusInCase
-				if state.LeftStatus != nil {
-					leftStatus = *state.LeftStatus
-				}
-				// Only count if not in case
-				if leftStatus != protocol.StatusInCase {
-					validBatteries = append(validBatteries, *state.LeftBattery)
-				}
-			}
-
-			if state.RightBattery != nil && *state.RightBattery > 0 {
-				allBatteries = append(allBatteries, *state.RightBattery)
-				rightStatus := protocol.StatusInCase
-				if state.RightStatus != nil {
-					rightStatus = *state.RightStatus
-				}
-				// Only count if not in case
-				if rightStatus != protocol.StatusInCase {
-					validBatteries = append(validBatteries, *state.RightBattery)
-				}
-			}
-
-			// Find the lowest battery - prefer valid (out/wearing), fall back to all batteries
-			batteriesToUse := validBatteries
-			if len(batteriesToUse) == 0 {
-				batteriesToUse = allBatteries
-			}
-
-			if len(batteriesToUse) > 0 {
-				lowest := batteriesToUse[0]
-				for _, bat := range batteriesToUse[1:] {
-					if bat < lowest {
-						lowest = bat
-					}
-				}
-				gameBudsBattery = lowest
-			}
-
+			gameBudsBattery = gameBudsTrayBattery(state)
 			tooltipParts = append(tooltipParts, fmt.Sprintf("GameBuds: %s", state.String()))
-		case "razer_deathadder":
+		case protocol.DeviceTypeRazerDeathAdder:
+			if !state.IsConnected {
+				continue
+			}
 			hasMouse = true
 			if state.Battery != nil {
 				mouseBattery = *state.Battery
 			}
 			tooltipParts = append(tooltipParts, fmt.Sprintf("Razer: %s", state.String()))
+		case protocol.DeviceTypeHyperXCloudAlpha:
+			if !state.IsConnected {
+				continue
+			}
+			hasHyperX = true
+			if state.IsCharging != nil && *state.IsCharging {
+				hyperxCharging = true
+			}
+			if state.Battery != nil {
+				hyperxBattery = *state.Battery
+			}
+			tooltipParts = append(tooltipParts, fmt.Sprintf("HyperX: %s", state.String()))
 		}
 	}
 
-	// Build tray icon title with both battery levels
 	var titleParts []string
 
-	// Show GameBuds battery if device exists
 	if hasGameBuds {
-		if gameBudsBattery >= 0 {
-			titleParts = append(titleParts, fmt.Sprintf("🎧 %d%%", gameBudsBattery))
-		} else {
-			titleParts = append(titleParts, "🎧 --")
-		}
+		titleParts = append(titleParts, formatTrayBattery("🎧", gameBudsBattery, false))
 	}
 
-	// Show Mouse battery if device exists
+	if hasHyperX {
+		titleParts = append(titleParts, formatTrayBattery("🎧", hyperxBattery, hyperxCharging))
+	}
+
 	if hasMouse {
-		if mouseBattery >= 0 {
-			titleParts = append(titleParts, fmt.Sprintf("🖱️ %d%%", mouseBattery))
-		} else {
-			titleParts = append(titleParts, "🖱️ --")
-		}
+		titleParts = append(titleParts, formatTrayBattery("🖱️", mouseBattery, false))
 	}
 
-	// Show Docker container count if any are running
 	dockerCount := t.dockerState.RunningCount()
 	if dockerCount > 0 {
 		titleParts = append(titleParts, fmt.Sprintf("🐳 %d", dockerCount))
 		tooltipParts = append(tooltipParts, fmt.Sprintf("Docker: %d container(s)", dockerCount))
 	}
 
-	// Update tray icon
 	if len(titleParts) == 0 {
 		systray.SetTitle("🎧")
 		systray.SetTooltip(fmt.Sprintf("No devices connected (v%s)", version.Version))
 	} else {
-		title := ""
-		for i, part := range titleParts {
-			if i > 0 {
-				title += " "
-			}
-			title += part
-		}
+		title := strings.Join(titleParts, " ")
 		log.Printf("Setting tray title: %s", title)
 		systray.SetTitle(title)
 
-		// Update tooltip with version
-		tooltip := ""
-		for i, part := range tooltipParts {
-			if i > 0 {
-				tooltip += " | "
-			}
-			tooltip += part
-		}
+		tooltip := strings.Join(tooltipParts, " | ")
 		tooltip += fmt.Sprintf(" (v%s)", version.Version)
 		systray.SetTooltip(tooltip)
 	}
 }
 
-// UpdateDockerState updates the Docker section of the tray menu
 func (t *TrayManager) UpdateDockerState(state docker.DockerState) {
 	t.mu.Lock()
 	t.dockerState = state
@@ -327,7 +341,6 @@ func (t *TrayManager) UpdateDockerState(state docker.DockerState) {
 		t.dockerStopAll.Hide()
 	} else {
 		t.dockerMenu.SetTitle(fmt.Sprintf("🐳 Docker (%d running)", count))
-		// List container names
 		names := make([]string, 0, len(state.Containers))
 		for _, c := range state.Containers {
 			names = append(names, c.Name)
@@ -340,32 +353,83 @@ func (t *TrayManager) UpdateDockerState(state docker.DockerState) {
 	log.Printf("Docker state updated: available=%v, containers=%d", state.Available, count)
 }
 
-// DockerStopAllChannel returns the channel that receives clicks on "Stop All Containers"
 func (t *TrayManager) DockerStopAllChannel() <-chan struct{} {
 	return t.dockerStopAll.ClickedCh
 }
 
-// joinNames joins container names, truncating with "+N more" if there are too many
 func joinNames(names []string, max int) string {
 	if len(names) <= max {
-		result := ""
-		for i, n := range names {
-			if i > 0 {
-				result += ", "
-			}
-			result += n
-		}
-		return result
+		return strings.Join(names, ", ")
 	}
-	result := ""
-	for i := 0; i < max; i++ {
-		if i > 0 {
-			result += ", "
-		}
-		result += names[i]
+	return fmt.Sprintf("%s +%d more", strings.Join(names[:max], ", "), len(names)-max)
+}
+
+func isVisibleGameBudsState(state protocol.DeviceState) bool {
+	return state.IsConnected && (state.LeftBattery != nil || state.RightBattery != nil ||
+		state.LeftStatus != nil || state.RightStatus != nil || state.ANCMode != nil)
+}
+
+func gameBudsTrayBattery(state protocol.DeviceState) int {
+	validBatteries := make([]int, 0, 2)
+	allBatteries := make([]int, 0, 2)
+
+	collectEarbudBattery(&validBatteries, &allBatteries, state.LeftBattery, state.LeftStatus)
+	collectEarbudBattery(&validBatteries, &allBatteries, state.RightBattery, state.RightStatus)
+
+	if len(validBatteries) > 0 {
+		return lowestBattery(validBatteries)
 	}
-	result += fmt.Sprintf(" +%d more", len(names)-max)
-	return result
+	return lowestBattery(allBatteries)
+}
+
+func collectEarbudBattery(validBatteries, allBatteries *[]int, battery *int, status *protocol.EarbudStatus) {
+	if battery == nil || *battery <= 0 {
+		return
+	}
+
+	*allBatteries = append(*allBatteries, *battery)
+	if status != nil && *status != protocol.StatusInCase {
+		*validBatteries = append(*validBatteries, *battery)
+	}
+}
+
+func lowestBattery(batteries []int) int {
+	if len(batteries) == 0 {
+		return -1
+	}
+
+	lowest := batteries[0]
+	for _, battery := range batteries[1:] {
+		if battery < lowest {
+			lowest = battery
+		}
+	}
+	return lowest
+}
+
+func formatBatteryMenuTitle(battery *int) string {
+	if battery == nil {
+		return "  Battery: --"
+	}
+	return fmt.Sprintf("  %s Battery: %d%%", getBatteryIcon(*battery), *battery)
+}
+
+func formatHyperXBatteryMenuTitle(state protocol.DeviceState) string {
+	if state.IsCharging != nil && *state.IsCharging && state.Battery == nil {
+		return "  ⚡ Battery: Charging"
+	}
+	return formatBatteryMenuTitle(state.Battery)
+}
+
+func formatTrayBattery(icon string, battery int, charging bool) string {
+	switch {
+	case battery >= 0:
+		return fmt.Sprintf("%s %d%%", icon, battery)
+	case charging:
+		return fmt.Sprintf("%s ⚡", icon)
+	default:
+		return fmt.Sprintf("%s --", icon)
+	}
 }
 
 func formatGameBudsBattery(battery *int, status *protocol.EarbudStatus, side string) string {
@@ -378,7 +442,6 @@ func formatGameBudsBattery(battery *int, status *protocol.EarbudStatus, side str
 		batteryVal = *battery
 	}
 
-	// If status is nil, treat as unknown/default
 	if status == nil {
 		if batteryVal > 0 {
 			return fmt.Sprintf("%s %s: %d%%", getBatteryIcon(batteryVal), side, batteryVal)

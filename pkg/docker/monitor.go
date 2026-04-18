@@ -9,29 +9,24 @@ import (
 	"time"
 )
 
-// ContainerInfo holds basic information about a running Docker container
 type ContainerInfo struct {
 	ID   string
 	Name string
 }
 
-// DockerState represents the current state of Docker containers
 type DockerState struct {
-	Available  bool            // whether Docker CLI is reachable
-	Containers []ContainerInfo // running containers
+	Available  bool
+	Containers []ContainerInfo
 }
 
-// RunningCount returns the number of running containers
 func (s DockerState) RunningCount() int {
 	return len(s.Containers)
 }
 
-// CommandRunner abstracts command execution for testing
 type CommandRunner interface {
 	Run(ctx context.Context, name string, args ...string) (string, error)
 }
 
-// ExecCommandRunner runs real commands via os/exec
 type ExecCommandRunner struct{}
 
 func (r *ExecCommandRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
@@ -40,7 +35,6 @@ func (r *ExecCommandRunner) Run(ctx context.Context, name string, args ...string
 	return string(out), err
 }
 
-// Monitor polls Docker for running container state on a fixed interval
 type Monitor struct {
 	mu       sync.RWMutex
 	state    DockerState
@@ -52,7 +46,6 @@ type Monitor struct {
 	stopped      bool
 }
 
-// NewMonitor creates a new Docker monitor with the given poll interval
 func NewMonitor(interval time.Duration) *Monitor {
 	return &Monitor{
 		runner:       &ExecCommandRunner{},
@@ -61,7 +54,6 @@ func NewMonitor(interval time.Duration) *Monitor {
 	}
 }
 
-// NewMonitorWithRunner creates a Monitor with a custom CommandRunner (for testing)
 func NewMonitorWithRunner(interval time.Duration, runner CommandRunner) *Monitor {
 	return &Monitor{
 		runner:       runner,
@@ -70,23 +62,19 @@ func NewMonitorWithRunner(interval time.Duration, runner CommandRunner) *Monitor
 	}
 }
 
-// SetOnChange sets a callback that fires whenever the Docker state changes
 func (m *Monitor) SetOnChange(fn func(DockerState)) {
 	m.mu.Lock()
 	m.onChange = fn
 	m.mu.Unlock()
 }
 
-// GetState returns the last known Docker state
 func (m *Monitor) GetState() DockerState {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.state
 }
 
-// Start begins polling Docker in the background
 func (m *Monitor) Start() {
-	// Do an initial poll immediately
 	m.poll()
 
 	go func() {
@@ -104,7 +92,6 @@ func (m *Monitor) Start() {
 	}()
 }
 
-// Stop stops the polling goroutine
 func (m *Monitor) Stop() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -114,7 +101,6 @@ func (m *Monitor) Stop() {
 	}
 }
 
-// poll queries Docker for running containers and fires the callback if the state changed
 func (m *Monitor) poll() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -132,7 +118,6 @@ func (m *Monitor) poll() {
 	}
 }
 
-// fetchState queries Docker CLI for running containers
 func (m *Monitor) fetchState(ctx context.Context) DockerState {
 	// Use docker ps with a format template to get structured output
 	out, err := m.runner.Run(ctx, "docker", "ps", "--format", "{{.ID}}\t{{.Names}}")
@@ -150,7 +135,7 @@ func (m *Monitor) fetchState(ctx context.Context) DockerState {
 		}
 		parts := strings.SplitN(line, "\t", 2)
 		id := parts[0]
-		name := id // fallback
+		name := id
 		if len(parts) == 2 {
 			name = parts[1]
 		}
@@ -172,7 +157,6 @@ func (m *Monitor) stateChanged(newState DockerState) bool {
 	if len(m.state.Containers) != len(newState.Containers) {
 		return true
 	}
-	// Compare container IDs
 	oldIDs := make(map[string]bool, len(m.state.Containers))
 	for _, c := range m.state.Containers {
 		oldIDs[c.ID] = true
@@ -185,13 +169,10 @@ func (m *Monitor) stateChanged(newState DockerState) bool {
 	return false
 }
 
-// StopAllContainers stops all running Docker containers.
-// Returns the number of containers stopped and any error.
 func StopAllContainers(runner CommandRunner) (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Get running container IDs
 	out, err := runner.Run(ctx, "docker", "ps", "-q")
 	if err != nil {
 		return 0, err

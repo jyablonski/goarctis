@@ -23,13 +23,11 @@ var (
 	githubAPI = "https://api.github.com"
 )
 
-// Release represents a GitHub release.
 type Release struct {
 	TagName string  `json:"tag_name"`
 	Assets  []Asset `json:"assets"`
 }
 
-// Asset represents a release asset on GitHub.
 type Asset struct {
 	Name        string `json:"name"`
 	DownloadURL string `json:"browser_download_url"`
@@ -55,7 +53,6 @@ func Run() error {
 		return nil
 	}
 
-	// Find the correct asset for this platform
 	assetName := fmt.Sprintf("goarctis-%s-%s", runtime.GOOS, runtime.GOARCH)
 	var downloadURL string
 	for _, asset := range latestRelease.Assets {
@@ -69,7 +66,6 @@ func Run() error {
 		return fmt.Errorf("no release asset found for %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 
-	// Get current executable path, resolving symlinks
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
@@ -87,7 +83,6 @@ func Run() error {
 	releaseURL := fmt.Sprintf("https://github.com/%s/%s/releases/tag/%s", githubOwner, githubRepo, latestRelease.TagName)
 	fmt.Printf("success: upgraded goarctis from %s to %s! %s\n", currentVersion, latestRelease.TagName, releaseURL)
 
-	// Restart the systemd user service so the new binary takes effect
 	if err := restartService(); err != nil {
 		fmt.Printf("warning: failed to restart goarctis.service: %v\n", err)
 		fmt.Println("you may need to restart the service manually: systemctl --user restart goarctis.service")
@@ -191,9 +186,7 @@ func downloadAndReplace(execPath, downloadURL string) error {
 		return err
 	}
 
-	// Try atomic rename first (same filesystem).
 	if err := os.Rename(tempFile, execPath); err != nil {
-		// Fallback: copy across filesystems, then remove temp.
 		if copyErr := crossFSReplace(tempFile, execPath); copyErr != nil {
 			os.Remove(tempFile)
 			return fmt.Errorf("rename failed (%v) and cross-fs copy also failed: %w", err, copyErr)

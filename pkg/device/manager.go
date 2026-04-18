@@ -8,40 +8,34 @@ import (
 	"github.com/jyablonski/goarctis/pkg/protocol"
 )
 
-// DeviceManager manages multiple battery devices
 type DeviceManager struct {
 	devices  map[string]BatteryDevice
 	mu       sync.RWMutex
 	onChange func(string, protocol.DeviceState)
 }
 
-// DiscoveryConfig controls which device types to discover
 type DiscoveryConfig struct {
 	DisableGameBuds bool
 	DisableRazer    bool
+	DisableHyperX   bool
 }
 
-// NewDeviceManager creates a new device manager
 func NewDeviceManager() *DeviceManager {
 	return &DeviceManager{
 		devices: make(map[string]BatteryDevice),
 	}
 }
 
-// SetOnStateChange sets a callback for when any device state changes
-// The callback receives (deviceID, state)
 func (dm *DeviceManager) SetOnStateChange(callback func(string, protocol.DeviceState)) {
 	dm.mu.Lock()
 	dm.onChange = callback
 	dm.mu.Unlock()
 }
 
-// DiscoverDevices discovers all supported devices, respecting the provided config
 func (dm *DeviceManager) DiscoverDevices(cfg DiscoveryConfig) error {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
-	// Discover SteelSeries GameBuds
 	if cfg.DisableGameBuds {
 		log.Println("SteelSeries GameBuds discovery disabled")
 	} else {
@@ -55,7 +49,19 @@ func (dm *DeviceManager) DiscoverDevices(cfg DiscoveryConfig) error {
 		}
 	}
 
-	// Discover Razer devices
+	if cfg.DisableHyperX {
+		log.Println("HyperX Cloud Alpha Wireless discovery disabled")
+	} else {
+		hyperxDevice := NewHyperXDevice()
+		if err := hyperxDevice.FindDevice(); err != nil {
+			log.Printf("HyperX Cloud Alpha Wireless not found: %v", err)
+		} else {
+			hyperxDevice.SetOnStateChange(dm.makeStateChangeHandler(hyperxDevice.GetID()))
+			dm.devices[hyperxDevice.GetID()] = hyperxDevice
+			log.Printf("Found %s", hyperxDevice.GetName())
+		}
+	}
+
 	if cfg.DisableRazer {
 		log.Println("Razer device discovery disabled")
 	} else {
@@ -78,7 +84,6 @@ func (dm *DeviceManager) DiscoverDevices(cfg DiscoveryConfig) error {
 	return nil
 }
 
-// makeStateChangeHandler creates a state change handler for a specific device
 func (dm *DeviceManager) makeStateChangeHandler(deviceID string) func(protocol.DeviceState) {
 	return func(state protocol.DeviceState) {
 		dm.mu.RLock()
@@ -90,7 +95,6 @@ func (dm *DeviceManager) makeStateChangeHandler(deviceID string) func(protocol.D
 	}
 }
 
-// StartAll starts monitoring all discovered devices
 func (dm *DeviceManager) StartAll() error {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
@@ -110,7 +114,6 @@ func (dm *DeviceManager) StartAll() error {
 	return nil
 }
 
-// StopAll stops monitoring all devices
 func (dm *DeviceManager) StopAll() {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
@@ -120,7 +123,6 @@ func (dm *DeviceManager) StopAll() {
 	}
 }
 
-// CloseAll closes all devices and releases resources
 func (dm *DeviceManager) CloseAll() {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
@@ -133,14 +135,12 @@ func (dm *DeviceManager) CloseAll() {
 	dm.devices = make(map[string]BatteryDevice)
 }
 
-// GetDevice returns a device by ID
 func (dm *DeviceManager) GetDevice(deviceID string) BatteryDevice {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
 	return dm.devices[deviceID]
 }
 
-// GetAllDevices returns all managed devices
 func (dm *DeviceManager) GetAllDevices() map[string]BatteryDevice {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
@@ -152,7 +152,6 @@ func (dm *DeviceManager) GetAllDevices() map[string]BatteryDevice {
 	return result
 }
 
-// GetDeviceStates returns the current state of all devices
 func (dm *DeviceManager) GetDeviceStates() map[string]protocol.DeviceState {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()

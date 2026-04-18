@@ -36,7 +36,7 @@ func TestParseBattery(t *testing.T) {
 				LeftStatus:  func() *EarbudStatus { s := StatusWorn; return &s }(),
 				LeftBattery: func() *int { b := 50; return &b }(),
 			},
-			expectedLeft:  50, // Should keep previous value
+			expectedLeft:  50,
 			expectedRight: 80,
 		},
 		{
@@ -240,7 +240,6 @@ func TestStateCallback(t *testing.T) {
 		callCount++
 	})
 
-	// First update - should trigger callback
 	h.ParseReport([]byte{0xB7, 75, 80})
 	if callCount != 1 {
 		t.Errorf("Expected 1 callback, got %d", callCount)
@@ -253,13 +252,11 @@ func TestStateCallback(t *testing.T) {
 		t.Errorf("Expected left battery 75, got %d", val)
 	}
 
-	// Same update - should NOT trigger callback
 	h.ParseReport([]byte{0xB7, 75, 80})
 	if callCount != 1 {
 		t.Errorf("Expected still 1 callback after duplicate, got %d", callCount)
 	}
 
-	// Different update - should trigger callback
 	h.ParseReport([]byte{0xB7, 74, 80})
 	if callCount != 2 {
 		t.Errorf("Expected 2 callbacks after change, got %d", callCount)

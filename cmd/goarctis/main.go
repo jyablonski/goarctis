@@ -24,14 +24,15 @@ var (
 	dockerMonitor   *docker.Monitor
 	disableGameBuds bool
 	disableRazer    bool
+	disableHyperX   bool
 )
 
 func main() {
-	// Parse command line flags
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	doSelfUpdate := flag.Bool("self-update", false, "Update goarctis to the latest release and restart the service")
 	flag.BoolVar(&disableGameBuds, "disable-gamebuds", false, "Disable SteelSeries GameBuds monitoring")
 	flag.BoolVar(&disableRazer, "disable-razer", false, "Disable Razer device monitoring")
+	flag.BoolVar(&disableHyperX, "disable-hyperx", false, "Disable HyperX Cloud Alpha Wireless monitoring")
 	flag.Parse()
 
 	if *showVersion {
@@ -50,7 +51,6 @@ func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 	log.Printf("Starting goarctis version %s...", version.Version)
 
-	// Setup signal handling
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
@@ -65,22 +65,21 @@ func main() {
 }
 
 func onReady() {
-	// Initialize UI
 	trayManager = ui.NewTrayManager()
 	trayManager.Initialize(ui.TrayConfig{
 		DisableGameBuds: disableGameBuds,
 		DisableRazer:    disableRazer,
+		DisableHyperX:   disableHyperX,
 	})
 
-	// Initialize device manager
 	deviceManager = device.NewDeviceManager()
 	deviceManager.SetOnStateChange(onStateChange)
 
-	// Discover and start devices
 	go func() {
 		if err := deviceManager.DiscoverDevices(device.DiscoveryConfig{
 			DisableGameBuds: disableGameBuds,
 			DisableRazer:    disableRazer,
+			DisableHyperX:   disableHyperX,
 		}); err != nil {
 			log.Printf("Failed to discover devices: %v", err)
 			trayManager.SetStatus("No devices found")
@@ -93,27 +92,19 @@ func onReady() {
 			return
 		}
 
-		// Build status message
-		deviceNames := make([]string, 0, len(devices))
-		for _, dev := range devices {
-			deviceNames = append(deviceNames, dev.GetName())
-		}
 		trayManager.SetStatus(fmt.Sprintf("Connected: %d device(s)", len(devices)))
 
-		// Start monitoring all devices
 		if err := deviceManager.StartAll(); err != nil {
 			log.Printf("Failed to start some devices: %v", err)
 		}
 	}()
 
-	// Initialize Docker monitor (poll every 10 seconds)
 	dockerMonitor = docker.NewMonitor(10 * time.Second)
 	dockerMonitor.SetOnChange(func(state docker.DockerState) {
 		trayManager.UpdateDockerState(state)
 	})
 	dockerMonitor.Start()
 
-	// Handle "Stop All Containers" button
 	go func() {
 		runner := &docker.ExecCommandRunner{}
 		for range trayManager.DockerStopAllChannel() {
@@ -127,7 +118,6 @@ func onReady() {
 		}
 	}()
 
-	// Handle quit button
 	go func() {
 		<-trayManager.QuitChannel()
 		log.Println("Quit clicked")

@@ -147,7 +147,6 @@ func TestNewTrayManager(t *testing.T) {
 		t.Fatal("NewTrayManager returned nil")
 	}
 
-	// All menu items should be nil until Initialize is called
 	if manager.mStatus != nil {
 		t.Error("mStatus should be nil before Initialize")
 	}
@@ -162,98 +161,109 @@ func TestNewTrayManager(t *testing.T) {
 	}
 }
 
-// Test battery level calculation logic
-func TestLowestBatteryCalculation(t *testing.T) {
+func TestGameBudsTrayBattery(t *testing.T) {
 	tests := []struct {
-		name          string
-		leftBattery   int
-		rightBattery  int
-		leftStatus    protocol.EarbudStatus
-		rightStatus   protocol.EarbudStatus
-		expectedValue int
-		shouldShow    bool
+		name     string
+		state    protocol.DeviceState
+		expected int
 	}{
 		{
-			name:          "Both wearing, left lower",
-			leftBattery:   50,
-			rightBattery:  75,
-			leftStatus:    protocol.StatusWorn,
-			rightStatus:   protocol.StatusWorn,
-			expectedValue: 50,
-			shouldShow:    true,
+			name: "Both wearing, left lower",
+			state: protocol.DeviceState{
+				LeftBattery:  intPtr(50),
+				RightBattery: intPtr(75),
+				LeftStatus:   earbudStatusPtr(protocol.StatusWorn),
+				RightStatus:  earbudStatusPtr(protocol.StatusWorn),
+			},
+			expected: 50,
 		},
 		{
-			name:          "Both wearing, right lower",
-			leftBattery:   80,
-			rightBattery:  60,
-			leftStatus:    protocol.StatusWorn,
-			rightStatus:   protocol.StatusWorn,
-			expectedValue: 60,
-			shouldShow:    true,
+			name: "Both wearing, right lower",
+			state: protocol.DeviceState{
+				LeftBattery:  intPtr(80),
+				RightBattery: intPtr(60),
+				LeftStatus:   earbudStatusPtr(protocol.StatusWorn),
+				RightStatus:  earbudStatusPtr(protocol.StatusWorn),
+			},
+			expected: 60,
 		},
 		{
-			name:          "Left in case, right wearing",
-			leftBattery:   90,
-			rightBattery:  50,
-			leftStatus:    protocol.StatusInCase,
-			rightStatus:   protocol.StatusWorn,
-			expectedValue: 50,
-			shouldShow:    true,
+			name: "Left in case, right wearing",
+			state: protocol.DeviceState{
+				LeftBattery:  intPtr(90),
+				RightBattery: intPtr(50),
+				LeftStatus:   earbudStatusPtr(protocol.StatusInCase),
+				RightStatus:  earbudStatusPtr(protocol.StatusWorn),
+			},
+			expected: 50,
 		},
 		{
-			name:          "Both in case",
-			leftBattery:   80,
-			rightBattery:  75,
-			leftStatus:    protocol.StatusInCase,
-			rightStatus:   protocol.StatusInCase,
-			expectedValue: 100,
-			shouldShow:    false,
+			name: "Both in case falls back to available batteries",
+			state: protocol.DeviceState{
+				LeftBattery:  intPtr(80),
+				RightBattery: intPtr(75),
+				LeftStatus:   earbudStatusPtr(protocol.StatusInCase),
+				RightStatus:  earbudStatusPtr(protocol.StatusInCase),
+			},
+			expected: 75,
 		},
 		{
-			name:          "One out with zero battery",
-			leftBattery:   0,
-			rightBattery:  50,
-			leftStatus:    protocol.StatusOut,
-			rightStatus:   protocol.StatusWorn,
-			expectedValue: 50,
-			shouldShow:    true,
+			name: "One out with zero battery",
+			state: protocol.DeviceState{
+				LeftBattery:  intPtr(0),
+				RightBattery: intPtr(50),
+				LeftStatus:   earbudStatusPtr(protocol.StatusOut),
+				RightStatus:  earbudStatusPtr(protocol.StatusWorn),
+			},
+			expected: 50,
 		},
 		{
-			name:          "Both zero battery",
-			leftBattery:   0,
-			rightBattery:  0,
-			leftStatus:    protocol.StatusWorn,
-			rightStatus:   protocol.StatusWorn,
-			expectedValue: 100,
-			shouldShow:    false,
+			name: "Both zero battery",
+			state: protocol.DeviceState{
+				LeftBattery:  intPtr(0),
+				RightBattery: intPtr(0),
+				LeftStatus:   earbudStatusPtr(protocol.StatusWorn),
+				RightStatus:  earbudStatusPtr(protocol.StatusWorn),
+			},
+			expected: -1,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Simulate the logic from UpdateState
-			lowestBattery := 100
-			if tt.leftStatus != protocol.StatusInCase && tt.leftBattery > 0 {
-				lowestBattery = tt.leftBattery
-			}
-			if tt.rightStatus != protocol.StatusInCase && tt.rightBattery > 0 && tt.rightBattery < lowestBattery {
-				lowestBattery = tt.rightBattery
-			}
-
-			shouldShow := lowestBattery < 100
-
-			if lowestBattery != tt.expectedValue {
-				t.Errorf("Lowest battery = %d, want %d", lowestBattery, tt.expectedValue)
-			}
-
-			if shouldShow != tt.shouldShow {
-				t.Errorf("Should show battery = %v, want %v", shouldShow, tt.shouldShow)
+			got := gameBudsTrayBattery(tt.state)
+			if got != tt.expected {
+				t.Errorf("gameBudsTrayBattery() = %d, want %d", got, tt.expected)
 			}
 		})
 	}
 }
 
-// Benchmark the formatting functions
+func TestSingleBatteryFormatting(t *testing.T) {
+	if got := formatBatteryMenuTitle(intPtr(72)); got != "  🔋 Battery: 72%" {
+		t.Errorf("formatBatteryMenuTitle() = %q", got)
+	}
+	if got := formatBatteryMenuTitle(nil); got != "  Battery: --" {
+		t.Errorf("formatBatteryMenuTitle(nil) = %q", got)
+	}
+
+	charging := true
+	state := protocol.DeviceState{IsCharging: &charging}
+	if got := formatHyperXBatteryMenuTitle(state); got != "  ⚡ Battery: Charging" {
+		t.Errorf("formatHyperXBatteryMenuTitle(charging) = %q", got)
+	}
+
+	if got := formatTrayBattery("🎧", 45, false); got != "🎧 45%" {
+		t.Errorf("formatTrayBattery(with battery) = %q", got)
+	}
+	if got := formatTrayBattery("🎧", -1, true); got != "🎧 ⚡" {
+		t.Errorf("formatTrayBattery(charging) = %q", got)
+	}
+	if got := formatTrayBattery("🎧", -1, false); got != "🎧 --" {
+		t.Errorf("formatTrayBattery(empty) = %q", got)
+	}
+}
+
 func BenchmarkFormatGameBudsBattery(b *testing.B) {
 	battery := 75
 	status := protocol.StatusWorn
@@ -336,7 +346,6 @@ func TestNewTrayManager_DockerFields(t *testing.T) {
 		t.Fatal("NewTrayManager returned nil")
 	}
 
-	// Docker menu items should be nil before Initialize
 	if manager.dockerMenu != nil {
 		t.Error("dockerMenu should be nil before Initialize")
 	}
@@ -357,14 +366,14 @@ func TestTrayConfig_Defaults(t *testing.T) {
 	if cfg.DisableRazer {
 		t.Error("DisableRazer should default to false")
 	}
+	if cfg.DisableHyperX {
+		t.Error("DisableHyperX should default to false")
+	}
 }
 
 func TestTrayManager_DisabledGameBuds_NilGuard(t *testing.T) {
 	manager := NewTrayManager()
 
-	// Simulate disabled GameBuds: menu items remain nil (as if Initialize
-	// was called with DisableGameBuds=true, which skips creating them)
-	// The updateGameBuds method should safely return without panicking.
 	leftBattery := 80
 	rightBattery := 70
 	state := protocol.DeviceState{
@@ -375,10 +384,8 @@ func TestTrayManager_DisabledGameBuds_NilGuard(t *testing.T) {
 		IsConnected:  true,
 	}
 
-	// This should not panic even though gameBudsMenu is nil
 	manager.updateGameBuds(state)
 
-	// Also verify that gameBuds fields are still nil
 	if manager.gameBudsMenu != nil {
 		t.Error("gameBudsMenu should remain nil when disabled")
 	}
@@ -387,7 +394,6 @@ func TestTrayManager_DisabledGameBuds_NilGuard(t *testing.T) {
 func TestTrayManager_DisabledRazer_NilGuard(t *testing.T) {
 	manager := NewTrayManager()
 
-	// Simulate disabled Razer: menu items remain nil
 	battery := 70
 	state := protocol.DeviceState{
 		DeviceID:    "razer-device",
@@ -396,11 +402,35 @@ func TestTrayManager_DisabledRazer_NilGuard(t *testing.T) {
 		IsConnected: true,
 	}
 
-	// This should not panic even though razerMenu is nil
 	manager.updateRazer(state)
 
-	// Also verify that razer fields are still nil
 	if manager.razerMenu != nil {
 		t.Error("razerMenu should remain nil when disabled")
 	}
+}
+
+func TestTrayManager_DisabledHyperX_NilGuard(t *testing.T) {
+	manager := NewTrayManager()
+
+	battery := 70
+	state := protocol.DeviceState{
+		DeviceID:    "hyperx_cloud_alpha_wireless",
+		DeviceType:  protocol.DeviceTypeHyperXCloudAlpha,
+		Battery:     &battery,
+		IsConnected: true,
+	}
+
+	manager.updateHyperX(state)
+
+	if manager.hyperxMenu != nil {
+		t.Error("hyperxMenu should remain nil when disabled")
+	}
+}
+
+func intPtr(v int) *int {
+	return &v
+}
+
+func earbudStatusPtr(v protocol.EarbudStatus) *protocol.EarbudStatus {
+	return &v
 }
