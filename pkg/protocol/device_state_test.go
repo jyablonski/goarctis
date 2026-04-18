@@ -73,11 +73,47 @@ func TestDeviceState_GetPrimaryBattery_AllCases(t *testing.T) {
 	}
 }
 
+func TestDeviceState_Equal_ComparesPointerValues(t *testing.T) {
+	batteryA := 65
+	batteryB := 65
+	chargingA := true
+	chargingB := true
+
+	leftStatusA := StatusWorn
+	leftStatusB := StatusWorn
+	stateA := DeviceState{
+		DeviceID:    "device-1",
+		DeviceType:  DeviceTypeRazerDeathAdder,
+		Battery:     &batteryA,
+		IsCharging:  &chargingA,
+		LeftStatus:  &leftStatusA,
+		IsConnected: true,
+	}
+	stateB := DeviceState{
+		DeviceID:    "device-1",
+		DeviceType:  DeviceTypeRazerDeathAdder,
+		Battery:     &batteryB,
+		IsCharging:  &chargingB,
+		LeftStatus:  &leftStatusB,
+		IsConnected: true,
+	}
+
+	if !stateA.Equal(stateB) {
+		t.Fatal("states with equal pointed-to values should be equal")
+	}
+
+	changedBattery := 64
+	stateB.Battery = &changedBattery
+	if stateA.Equal(stateB) {
+		t.Fatal("states with different pointed-to values should not be equal")
+	}
+}
+
 func TestDeviceState_String_Razer(t *testing.T) {
 	battery := 65
 	isCharging := true
 	state := DeviceState{
-		DeviceType: "razer_deathadder",
+		DeviceType: DeviceTypeRazerDeathAdder,
 		Battery:    &battery,
 		IsCharging: &isCharging,
 	}
@@ -93,7 +129,7 @@ func TestDeviceState_String_Razer_NotCharging(t *testing.T) {
 	battery := 65
 	isCharging := false
 	state := DeviceState{
-		DeviceType: "razer_deathadder",
+		DeviceType: DeviceTypeRazerDeathAdder,
 		Battery:    &battery,
 		IsCharging: &isCharging,
 	}

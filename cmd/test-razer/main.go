@@ -7,7 +7,6 @@ import (
 	"github.com/jyablonski/goarctis/pkg/device"
 )
 
-// Simple test script to verify Razer device discovery without running full app
 func main() {
 	fmt.Println("Testing Razer device discovery...")
 

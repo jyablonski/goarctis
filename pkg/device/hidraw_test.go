@@ -11,7 +11,6 @@ import (
 	"github.com/jyablonski/goarctis/pkg/protocol"
 )
 
-// MockFileInfo implements os.FileInfo
 type MockFileInfo struct {
 	name string
 }
@@ -23,7 +22,6 @@ func (m MockFileInfo) ModTime() time.Time { return time.Time{} }
 func (m MockFileInfo) IsDir() bool        { return false }
 func (m MockFileInfo) Sys() interface{}   { return nil }
 
-// MockFileSystem implements FileSystem for testing
 type MockFileSystem struct {
 	files       map[string][]byte
 	dirContents map[string][]os.FileInfo
@@ -145,6 +143,29 @@ func TestFindDevices_WrongVendorID(t *testing.T) {
 	}
 }
 
+func TestFindDevices_CaseInsensitiveHIDID(t *testing.T) {
+	mockFS := &MockFileSystem{
+		dirContents: map[string][]os.FileInfo{
+			"/sys/class/hidraw": {
+				MockFileInfo{name: "hidraw0"},
+			},
+		},
+		files: map[string][]byte{
+			"/sys/class/hidraw/hidraw0/device/uevent":              []byte("HID_ID=0003:00001038:0000230a\n"),
+			"/sys/class/hidraw/hidraw0/device/../bInterfaceNumber": []byte("03\n"),
+			"/dev/hidraw0": []byte{},
+		},
+	}
+
+	manager := NewHIDRawManagerWithFS(mockFS)
+	if err := manager.FindDevices(); err != nil {
+		t.Fatalf("FindDevices failed: %v", err)
+	}
+	if len(manager.devices) != 1 {
+		t.Errorf("Expected 1 device, got %d", len(manager.devices))
+	}
+}
+
 func TestFindDevices_CannotOpenDevice(t *testing.T) {
 	mockFS := &MockFileSystem{
 		dirContents: map[string][]os.FileInfo{
@@ -180,7 +201,6 @@ func TestSetOnStateChange(t *testing.T) {
 		callbackCalled = true
 	})
 
-	// Simulate a state change
 	manager.protocol.ParseReport([]byte{0xB7, 75, 80})
 
 	if !callbackCalled {
@@ -191,7 +211,6 @@ func TestSetOnStateChange(t *testing.T) {
 func TestGetState(t *testing.T) {
 	manager := NewHIDRawManager()
 
-	// Set some state
 	manager.protocol.ParseReport([]byte{0xB7, 75, 80})
 	manager.protocol.ParseReport([]byte{0xBD, 0x01})
 
@@ -235,15 +254,12 @@ func TestStopAndClose(t *testing.T) {
 		t.Fatalf("FindDevices failed: %v", err)
 	}
 
-	// Close should not panic
 	if err := manager.Close(); err != nil {
 		t.Errorf("Close returned error: %v", err)
 	}
 
-	// Verify stop channel is closed
 	select {
 	case <-manager.stopChan:
-		// Channel is closed, good
 	case <-time.After(100 * time.Millisecond):
 		t.Error("Stop channel was not closed")
 	}
@@ -252,7 +268,6 @@ func TestStopAndClose(t *testing.T) {
 func TestStart_NoDevices(t *testing.T) {
 	manager := NewHIDRawManager()
 
-	// Should return error when no devices
 	err := manager.Start()
 	if err == nil {
 		t.Error("Start should return error when no devices")

@@ -31,7 +31,6 @@ func TestDeviceManager_SetOnStateChange(t *testing.T) {
 		receivedState = state
 	})
 
-	// Trigger callback via makeStateChangeHandler
 	handler := dm.makeStateChangeHandler("test-device")
 	testState := protocol.DeviceState{
 		DeviceID:   "test-device",
@@ -53,7 +52,6 @@ func TestDeviceManager_SetOnStateChange(t *testing.T) {
 func TestGetDevice(t *testing.T) {
 	dm := NewDeviceManager()
 
-	// Should return nil for non-existent device
 	device := dm.GetDevice("nonexistent")
 	if device != nil {
 		t.Error("Expected nil for non-existent device")
@@ -87,14 +85,12 @@ func TestGetDeviceStates(t *testing.T) {
 func TestStopAll(t *testing.T) {
 	dm := NewDeviceManager()
 
-	// Should not panic with no devices
 	dm.StopAll()
 }
 
 func TestCloseAll(t *testing.T) {
 	dm := NewDeviceManager()
 
-	// Should not panic with no devices
 	dm.CloseAll()
 	if len(dm.devices) != 0 {
 		t.Error("CloseAll should clear devices map")
@@ -119,6 +115,9 @@ func TestDiscoveryConfig_Defaults(t *testing.T) {
 	if cfg.DisableRazer {
 		t.Error("DisableRazer should default to false")
 	}
+	if cfg.DisableHyperX {
+		t.Error("DisableHyperX should default to false")
+	}
 }
 
 func TestDiscoverDevices_AllDisabled(t *testing.T) {
@@ -127,6 +126,7 @@ func TestDiscoverDevices_AllDisabled(t *testing.T) {
 	cfg := DiscoveryConfig{
 		DisableGameBuds: true,
 		DisableRazer:    true,
+		DisableHyperX:   true,
 	}
 
 	err := dm.DiscoverDevices(cfg)
@@ -142,7 +142,6 @@ func TestDiscoverDevices_AllDisabled(t *testing.T) {
 func TestDeviceManager_GetDeviceStates_WithDevices(t *testing.T) {
 	dm := NewDeviceManager()
 
-	// Add a mock device to the manager
 	mockDevice := &mockHIDDevice{
 		id:   "test-device",
 		name: "Test Device",
@@ -166,7 +165,6 @@ func TestDeviceManager_GetDeviceStates_WithDevices(t *testing.T) {
 	}
 }
 
-// mockHIDDevice is a simple mock for testing
 type mockHIDDevice struct {
 	id        string
 	name      string
@@ -207,5 +205,4 @@ func (m *mockHIDDevice) Close() error {
 }
 
 func (m *mockHIDDevice) SetOnStateChange(callback func(protocol.DeviceState)) {
-	// Mock implementation
 }

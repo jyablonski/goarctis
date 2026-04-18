@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// MockCommandRunner is a test double for CommandRunner
 type MockCommandRunner struct {
 	mu       sync.Mutex
 	calls    []mockCall
@@ -139,12 +138,10 @@ func TestMonitor_FetchState_NoContainers(t *testing.T) {
 	m := NewMonitorWithRunner(time.Second, runner)
 	state := m.GetState()
 
-	// Before start, state should be zero-value
 	if state.Available {
 		t.Error("Should not be available before start")
 	}
 
-	// Do a manual poll
 	m.poll()
 	state = m.GetState()
 
@@ -209,7 +206,6 @@ func TestMonitor_OnChange_CalledOnStateChange(t *testing.T) {
 		if callCount == 1 {
 			return "abc123\tweb\n", nil
 		}
-		// Second call - add a container
 		return "abc123\tweb\ndef456\tdb\n", nil
 	})
 
@@ -223,7 +219,6 @@ func TestMonitor_OnChange_CalledOnStateChange(t *testing.T) {
 		mu.Unlock()
 	})
 
-	// First poll - should trigger change (from zero to 1 container)
 	m.poll()
 	mu.Lock()
 	if len(receivedStates) != 1 {
@@ -234,7 +229,6 @@ func TestMonitor_OnChange_CalledOnStateChange(t *testing.T) {
 	}
 	mu.Unlock()
 
-	// Second poll - should trigger change (from 1 to 2 containers)
 	m.poll()
 	mu.Lock()
 	if len(receivedStates) != 2 {
@@ -262,9 +256,7 @@ func TestMonitor_OnChange_NotCalledWhenUnchanged(t *testing.T) {
 		mu.Unlock()
 	})
 
-	// First poll triggers callback
 	m.poll()
-	// Second poll with same state should NOT trigger callback
 	m.poll()
 
 	mu.Lock()
@@ -283,11 +275,9 @@ func TestMonitor_StartStop(t *testing.T) {
 	m := NewMonitorWithRunner(50*time.Millisecond, runner)
 	m.Start()
 
-	// Let it run a few polls
 	time.Sleep(200 * time.Millisecond)
 	m.Stop()
 
-	// Should have polled multiple times
 	if runner.CallCount() < 2 {
 		t.Errorf("Expected at least 2 polls, got %d", runner.CallCount())
 	}
@@ -302,7 +292,7 @@ func TestMonitor_StopIdempotent(t *testing.T) {
 	m := NewMonitorWithRunner(time.Second, runner)
 	m.Start()
 	m.Stop()
-	m.Stop() // Should not panic
+	m.Stop()
 }
 
 func TestMonitor_StateChanged(t *testing.T) {
@@ -381,7 +371,6 @@ func TestMonitor_StateChanged(t *testing.T) {
 func TestStopAllContainers_NoContainers(t *testing.T) {
 	runner := NewMockCommandRunner()
 	runner.OnCommand("docker", func(args []string) (string, error) {
-		// docker ps -q returns empty when no containers
 		return "", nil
 	})
 
@@ -400,13 +389,11 @@ func TestStopAllContainers_WithContainers(t *testing.T) {
 	runner.OnCommand("docker", func(args []string) (string, error) {
 		callNum++
 		if callNum == 1 {
-			// docker ps -q
 			if len(args) >= 2 && args[0] == "ps" && args[1] == "-q" {
 				return "abc123\ndef456\n", nil
 			}
 		}
 		if callNum == 2 {
-			// docker stop abc123 def456
 			if len(args) >= 3 && args[0] == "stop" {
 				return "abc123\ndef456\n", nil
 			}
@@ -436,7 +423,6 @@ func TestStopAllContainers_DockerError(t *testing.T) {
 }
 
 func TestMonitor_FetchState_ContainerWithoutTab(t *testing.T) {
-	// Test parsing when docker ps output has no tab separator
 	runner := NewMockCommandRunner()
 	runner.OnCommand("docker", func(args []string) (string, error) {
 		return "abc123def456\n", nil
@@ -449,7 +435,6 @@ func TestMonitor_FetchState_ContainerWithoutTab(t *testing.T) {
 	if state.RunningCount() != 1 {
 		t.Errorf("RunningCount = %d, want 1", state.RunningCount())
 	}
-	// When no tab separator, both ID and Name should be the full string
 	if state.Containers[0].ID != "abc123def456" {
 		t.Errorf("Container ID = %q, want %q", state.Containers[0].ID, "abc123def456")
 	}

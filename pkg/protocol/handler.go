@@ -6,14 +6,16 @@ import (
 )
 
 const (
-	// Report IDs
+	DeviceTypeSteelSeriesGameBuds = "steelseries_gamebuds"
+	DeviceTypeRazerDeathAdder     = "razer_deathadder"
+	DeviceTypeHyperXCloudAlpha    = "hyperx_cloud_alpha_wireless"
+
 	ReportBattery    = 0xB7
 	ReportWearStatus = 0xB5
 	ReportANCMode    = 0xBD
 	ReportInEarEvent = 0xC6
 )
 
-// ANCMode represents the noise cancellation mode
 type ANCMode int
 
 const (
@@ -35,7 +37,6 @@ func (m ANCMode) String() string {
 	}
 }
 
-// EarbudStatus represents where an earbud is
 type EarbudStatus int
 
 const (
@@ -57,7 +58,6 @@ func (s EarbudStatus) String() string {
 	}
 }
 
-// DeviceState represents the current state of a device
 // Fields are optional - only populated for devices that support them
 type DeviceState struct {
 	DeviceID        string
@@ -74,7 +74,6 @@ type DeviceState struct {
 	FirmwareVersion string
 }
 
-// GetPrimaryBattery returns the primary battery level
 // For dual-battery devices, returns the lower of the two
 // Returns -1 if no battery information is available
 func (s DeviceState) GetPrimaryBattery() int {
@@ -98,9 +97,27 @@ func (s DeviceState) GetPrimaryBattery() int {
 	return -1
 }
 
+// Equal compares two DeviceState values by the values behind their optional
+// fields. Direct struct comparison is not suitable here because many fields are
+// pointers that are rebuilt on each poll.
+func (s DeviceState) Equal(other DeviceState) bool {
+	return s.DeviceID == other.DeviceID &&
+		s.DeviceType == other.DeviceType &&
+		s.IsConnected == other.IsConnected &&
+		s.FirmwareVersion == other.FirmwareVersion &&
+		pointerEqual(s.Battery, other.Battery) &&
+		pointerEqual(s.LeftBattery, other.LeftBattery) &&
+		pointerEqual(s.RightBattery, other.RightBattery) &&
+		pointerEqual(s.DockBattery, other.DockBattery) &&
+		pointerEqual(s.IsCharging, other.IsCharging) &&
+		pointerEqual(s.LeftStatus, other.LeftStatus) &&
+		pointerEqual(s.RightStatus, other.RightStatus) &&
+		pointerEqual(s.ANCMode, other.ANCMode)
+}
+
 func (s DeviceState) String() string {
 	switch s.DeviceType {
-	case "steelseries_gamebuds":
+	case DeviceTypeSteelSeriesGameBuds:
 		leftStr := "--"
 		rightStr := "--"
 		ancStr := "Unknown"
@@ -124,7 +141,7 @@ func (s DeviceState) String() string {
 		}
 
 		return fmt.Sprintf("L:%s | R:%s | ANC:%s", leftStr, rightStr, ancStr)
-	case "razer_deathadder":
+	case DeviceTypeRazerDeathAdder:
 		batteryStr := "--"
 		chargingStr := ""
 		if s.Battery != nil {
@@ -143,27 +160,24 @@ func (s DeviceState) String() string {
 	}
 }
 
-// Handler processes HID reports from the GameBuds
 type Handler struct {
 	state    DeviceState
-	onChange func(DeviceState) // Callback when state changes
+	onChange func(DeviceState)
 }
 
 func NewHandler() *Handler {
 	return &Handler{
 		state: DeviceState{
-			DeviceType:  "steelseries_gamebuds",
+			DeviceType:  DeviceTypeSteelSeriesGameBuds,
 			IsConnected: true,
 		},
 	}
 }
 
-// SetOnChange sets a callback for when device state changes
 func (h *Handler) SetOnChange(callback func(DeviceState)) {
 	h.onChange = callback
 }
 
-// ParseReport parses incoming HID data
 func (h *Handler) ParseReport(data []byte) error {
 	if len(data) == 0 {
 		return fmt.Errorf("empty report")
@@ -174,15 +188,12 @@ func (h *Handler) ParseReport(data []byte) error {
 
 	// Handle reports with ID 0x00 - might be reports without explicit ID or different format
 	if reportID == 0x00 && len(data) >= 2 {
-		// Try checking if the actual report ID is in a different position
 		// Some HID devices put the report ID in byte 1 or embed it differently
-		// Check multiple positions for embedded report IDs
 		for offset := 1; offset < len(data) && offset < 4; offset++ {
 			possibleID := data[offset]
 			if possibleID == ReportBattery || possibleID == ReportWearStatus ||
 				possibleID == ReportANCMode || possibleID == ReportInEarEvent {
 				log.Printf("🎧 GameBuds: Found embedded report ID 0x%02X at offset %d, data: %x", possibleID, offset, data)
-				// Try parsing with the embedded ID
 				reportID = possibleID
 				break
 			}
@@ -192,7 +203,6 @@ func (h *Handler) ParseReport(data []byte) error {
 		if reportID == 0x00 {
 			// The pattern 00020000 / 00000000 suggests button press/release
 			// This is likely a media control event (pause/play) - not a status report
-			// Log but don't parse as known report type
 			if len(data) >= 2 && data[1] == 0x02 {
 				log.Printf("🎧 GameBuds: Report 0x00 received (button/control event - pause detected): %x", data)
 			} else {
@@ -216,13 +226,11 @@ func (h *Handler) ParseReport(data []byte) error {
 		log.Printf("🎧 GameBuds: Parsing in-ear event report (0x%02X)", reportID)
 		h.parseInEarEvent(data)
 	default:
-		// Unknown report, log for discovery
 		log.Printf("🎧 GameBuds: Unknown report 0x%02X: %x", reportID, data)
 		return nil
 	}
 
-	// If state changed, trigger callback
-	if h.onChange != nil && !h.statesEqual(oldState, h.state) {
+	if h.onChange != nil && !oldState.Equal(h.state) {
 		log.Printf("🎧 GameBuds: State changed, triggering callback")
 		h.onChange(h.state)
 	} else if h.onChange != nil {
@@ -232,7 +240,6 @@ func (h *Handler) ParseReport(data []byte) error {
 	return nil
 }
 
-// copyState creates a deep copy of the state for comparison
 func (h *Handler) copyState() DeviceState {
 	state := h.state
 	copy := DeviceState{
@@ -276,27 +283,6 @@ func (h *Handler) copyState() DeviceState {
 	return copy
 }
 
-// statesEqual compares two DeviceState structs, handling pointer fields
-func (h *Handler) statesEqual(s1, s2 DeviceState) bool {
-	if s1.DeviceID != s2.DeviceID || s1.DeviceType != s2.DeviceType || s1.IsConnected != s2.IsConnected {
-		return false
-	}
-	if !pointerEqual(s1.Battery, s2.Battery) ||
-		!pointerEqual(s1.LeftBattery, s2.LeftBattery) ||
-		!pointerEqual(s1.RightBattery, s2.RightBattery) ||
-		!pointerEqual(s1.DockBattery, s2.DockBattery) ||
-		!pointerEqual(s1.IsCharging, s2.IsCharging) {
-		return false
-	}
-	if !pointerEqual(s1.LeftStatus, s2.LeftStatus) ||
-		!pointerEqual(s1.RightStatus, s2.RightStatus) ||
-		!pointerEqual(s1.ANCMode, s2.ANCMode) {
-		return false
-	}
-	return true
-}
-
-// pointerEqual compares two pointers of the same type
 func pointerEqual[T comparable](p1, p2 *T) bool {
 	if p1 == nil && p2 == nil {
 		return true
@@ -312,14 +298,11 @@ func (h *Handler) parseBattery(data []byte) {
 		return
 	}
 
-	// Handle reports where report ID might be at offset 0
-	// If data[0] is the report ID (0xB7), battery data starts at offset 1
-	// If data[0] is 0x00, check if report ID is embedded elsewhere
 	offset := 1
 	if len(data) > 0 && data[0] == 0xB7 {
-		offset = 1 // Report ID at start, data follows
+		offset = 1
 	} else if len(data) > 1 && data[1] == 0xB7 {
-		offset = 2 // Report ID at offset 1, data follows
+		offset = 2
 	}
 
 	if len(data) < offset+2 {
@@ -386,12 +369,10 @@ func (h *Handler) parseInEarEvent(data []byte) {
 	}
 }
 
-// GetState returns the current device state
 func (h *Handler) GetState() DeviceState {
 	return h.state
 }
 
-// EncodeCommand creates HID command bytes (placeholder for future)
 func (h *Handler) EncodeCommand(command string, params ...interface{}) ([]byte, error) {
 	// TODO: Implement when we figure out how to send commands
 	return nil, fmt.Errorf("command encoding not yet implemented")

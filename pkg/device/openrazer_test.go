@@ -60,56 +60,50 @@ func TestIsConnectionClosed(t *testing.T) {
 	}
 }
 
-func TestContains(t *testing.T) {
-	tests := []struct {
-		name     string
-		s        string
-		substr   string
-		expected bool
-	}{
-		{
-			name:     "exact match",
-			s:        "connection closed by user",
-			substr:   "connection closed by user",
-			expected: true,
-		},
-		{
-			name:     "contains substring",
-			s:        "failed to get battery: dbus: connection closed by user",
-			substr:   "connection closed by user",
-			expected: true,
-		},
-		{
-			name:     "does not contain",
-			s:        "some other error",
-			substr:   "connection closed",
-			expected: false,
-		},
-		{
-			name:     "empty string",
-			s:        "",
-			substr:   "test",
-			expected: false,
-		},
-		{
-			name:     "substring longer than string",
-			s:        "short",
-			substr:   "this is a very long substring",
-			expected: false,
+func TestRazerSetStateComparesPointerValues(t *testing.T) {
+	initialBattery := 70
+	initialCharging := false
+	r := &RazerDevice{
+		deviceSerial: "razer-1",
+		deviceName:   "Razer Test Device",
+		stopChan:     make(chan struct{}),
+		state: protocol.DeviceState{
+			DeviceID:    "razer-1",
+			DeviceType:  string(DeviceTypeRazerDeathAdder),
+			Battery:     &initialBattery,
+			IsCharging:  &initialCharging,
+			IsConnected: true,
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := contains(tt.s, tt.substr)
-			if result != tt.expected {
-				t.Errorf("contains(%q, %q) = %v, want %v", tt.s, tt.substr, result, tt.expected)
-			}
-		})
+	var callbackCount int
+	r.SetOnStateChange(func(protocol.DeviceState) {
+		callbackCount++
+	})
+
+	r.setState(func(state *protocol.DeviceState) {
+		battery := 70
+		isCharging := false
+		state.Battery = &battery
+		state.IsCharging = &isCharging
+		state.IsConnected = true
+	})
+	if callbackCount != 0 {
+		t.Fatalf("callback fired for equivalent values; count=%d", callbackCount)
+	}
+
+	r.setState(func(state *protocol.DeviceState) {
+		battery := 69
+		isCharging := false
+		state.Battery = &battery
+		state.IsCharging = &isCharging
+		state.IsConnected = true
+	})
+	if callbackCount != 1 {
+		t.Fatalf("callback count after changed value = %d, want 1", callbackCount)
 	}
 }
 
-// Mock RazerDevice for testing interface methods
 type mockRazerDevice struct {
 	id        string
 	name      string
@@ -150,7 +144,6 @@ func (m *mockRazerDevice) Close() error {
 }
 
 func (m *mockRazerDevice) SetOnStateChange(callback func(protocol.DeviceState)) {
-	// Mock implementation
 }
 
 func TestDeviceType_String(t *testing.T) {
@@ -159,5 +152,8 @@ func TestDeviceType_String(t *testing.T) {
 	}
 	if DeviceTypeRazerDeathAdder != "razer_deathadder" {
 		t.Errorf("DeviceTypeRazerDeathAdder = %q, want 'razer_deathadder'", DeviceTypeRazerDeathAdder)
+	}
+	if DeviceTypeHyperXCloudAlpha != "hyperx_cloud_alpha_wireless" {
+		t.Errorf("DeviceTypeHyperXCloudAlpha = %q, want 'hyperx_cloud_alpha_wireless'", DeviceTypeHyperXCloudAlpha)
 	}
 }

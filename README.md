@@ -6,7 +6,7 @@ A Linux system tray application for monitoring battery levels of wireless periph
 
 ## What It Does
 
-`goarctis` sits in your system tray and shows real-time battery status for SteelSeries GameBuds and Razer devices, plus Docker container counts. It uses HID for GameBuds and OpenRazer's D-Bus API for Razer mice.
+`goarctis` sits in your system tray and shows real-time battery status for SteelSeries GameBuds, HyperX Cloud Alpha Wireless headsets, and Razer devices, plus Docker container counts. It uses HID for GameBuds and HyperX, and OpenRazer's D-Bus API for Razer mice.
 
 <img width="423" height="485" alt="goarctis system tray" src="assets/tray-screenshot.png" />
 
@@ -66,6 +66,7 @@ sudo pacman -S libayatana-appindicator gtk3 pkgconf
 
 - Linux with PulseAudio/PipeWire
 - **GameBuds:** SteelSeries Arctis GameBuds connected via USB dongle
+- **HyperX Cloud Alpha Wireless:** connected via its 2.4 GHz USB dongle. The hidraw node is owned by `root:plugdev` — the user running goarctis must be in the `plugdev` group (`sudo usermod -aG plugdev $USER`, then log out and back in).
 - **Razer devices:** [OpenRazer](https://openrazer.github.io/) daemon installed and running
 - **Docker monitoring:** Docker CLI available in `PATH`
 
@@ -77,6 +78,7 @@ sudo pacman -S libayatana-appindicator gtk3 pkgconf
 | `--self-update` | Update to the latest release and restart the service | `goarctis --self-update` |
 | `--disable-gamebuds` | Skip GameBuds monitoring | `goarctis --disable-gamebuds` |
 | `--disable-razer` | Skip Razer device monitoring | `goarctis --disable-razer` |
+| `--disable-hyperx` | Skip HyperX Cloud Alpha Wireless monitoring | `goarctis --disable-hyperx` |
 
 Disabled device sections are completely hidden from the tray dropdown menu.
 
@@ -159,6 +161,7 @@ This validates semver format, checks for a clean working directory and duplicate
 │   ├── device/
 │   │   ├── manager.go        # device discovery and lifecycle management
 │   │   ├── hidraw.go         # SteelSeries HID driver (raw USB)
+│   │   ├── hyperx.go         # HyperX Cloud Alpha Wireless HID driver
 │   │   ├── openrazer.go      # Razer driver (D-Bus via OpenRazer)
 │   │   └── interface.go      # BatteryDevice interface
 │   ├── docker/
