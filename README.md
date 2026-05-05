@@ -2,11 +2,11 @@
 
 ![CI CD Pipeline](https://github.com/jyablonski/goarctis/actions/workflows/ci_cd.yaml/badge.svg)
 
-A Linux system tray application for monitoring battery levels of wireless peripherals and Docker containers.
+A Linux system tray application for monitoring wireless peripheral battery levels, Docker containers, and host CPU/memory utilization.
 
 ## What It Does
 
-`goarctis` sits in your system tray and shows real-time battery status for SteelSeries GameBuds, HyperX Cloud Alpha Wireless headsets, and Razer devices, plus Docker container counts. It uses HID for GameBuds and HyperX, and OpenRazer's D-Bus API for Razer mice.
+`goarctis` sits in your system tray and shows real-time battery status for SteelSeries GameBuds, HyperX Cloud Alpha Wireless headsets, and Razer devices, plus Docker container counts and host CPU/memory utilization. It uses HID for GameBuds and HyperX, OpenRazer's D-Bus API for Razer mice, and Linux procfs for system metrics.
 
 <img width="423" height="485" alt="goarctis system tray" src="assets/tray-screenshot.png" />
 
@@ -69,6 +69,7 @@ sudo pacman -S libayatana-appindicator gtk3 pkgconf
 - **HyperX Cloud Alpha Wireless:** connected via its 2.4 GHz USB dongle. The hidraw node is owned by `root:plugdev` — the user running goarctis must be in the `plugdev` group (`sudo usermod -aG plugdev $USER`, then log out and back in).
 - **Razer devices:** [OpenRazer](https://openrazer.github.io/) daemon installed and running
 - **Docker monitoring:** Docker CLI available in `PATH`
+- **CPU/memory monitoring:** Linux `/proc` mounted normally
 
 ## Usage
 
@@ -79,8 +80,9 @@ sudo pacman -S libayatana-appindicator gtk3 pkgconf
 | `--disable-gamebuds` | Skip GameBuds monitoring | `goarctis --disable-gamebuds` |
 | `--disable-razer` | Skip Razer device monitoring | `goarctis --disable-razer` |
 | `--disable-hyperx` | Skip HyperX Cloud Alpha Wireless monitoring | `goarctis --disable-hyperx` |
+| `--disable-system` | Skip CPU and memory monitoring | `goarctis --disable-system` |
 
-Disabled device sections are completely hidden from the tray dropdown menu.
+Disabled sections are completely hidden from the tray dropdown menu.
 
 Use `goarctis --help` for all available flags.
 
@@ -166,6 +168,9 @@ This validates semver format, checks for a clean working directory and duplicate
 │   │   └── interface.go      # BatteryDevice interface
 │   ├── docker/
 │   │   └── monitor.go        # Docker container monitoring (polls docker ps)
+│   ├── system/
+│   │   ├── monitor.go        # host CPU/memory monitoring
+│   │   └── proc.go           # Linux /proc parsing
 │   ├── protocol/
 │   │   └── handler.go        # HID protocol parser, DeviceState struct
 │   ├── selfupdate/
@@ -183,6 +188,7 @@ This validates semver format, checks for a clean working directory and duplicate
 
 - **[Code Structure](docs/code_structure.md)**: Package organization and design principles
 - **[How It Works](docs/how_it_works.md)**: HID communication, protocol parsing, and system tray integration
+- **[CPU and Memory Plan](docs/cpu_memory_monitoring_plan.md)**: Design notes for host resource monitoring
 
 ## License
 

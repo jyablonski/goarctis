@@ -104,6 +104,47 @@ func TestRazerSetStateComparesPointerValues(t *testing.T) {
 	}
 }
 
+func TestRazerStartEmitsCurrentState(t *testing.T) {
+	battery := 70
+	isCharging := false
+	r := &RazerDevice{
+		deviceSerial: "razer-1",
+		deviceName:   "Razer Test Device",
+		stopChan:     make(chan struct{}),
+		state: protocol.DeviceState{
+			DeviceID:    "razer-1",
+			DeviceType:  string(DeviceTypeRazerDeathAdder),
+			Battery:     &battery,
+			IsCharging:  &isCharging,
+			IsConnected: true,
+		},
+	}
+
+	var got protocol.DeviceState
+	var callbackCount int
+	r.SetOnStateChange(func(state protocol.DeviceState) {
+		got = state
+		callbackCount++
+	})
+
+	if err := r.Start(); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	if err := r.Stop(); err != nil {
+		t.Fatalf("Stop returned error: %v", err)
+	}
+
+	if callbackCount != 1 {
+		t.Fatalf("callback count = %d, want 1", callbackCount)
+	}
+	if got.Battery == nil || *got.Battery != 70 {
+		t.Fatalf("callback battery = %v, want 70", got.Battery)
+	}
+	if !got.IsConnected {
+		t.Fatal("callback state should be connected")
+	}
+}
+
 type mockRazerDevice struct {
 	id        string
 	name      string

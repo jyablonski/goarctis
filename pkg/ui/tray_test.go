@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/jyablonski/goarctis/pkg/protocol"
+	"github.com/jyablonski/goarctis/pkg/system"
 )
 
 func TestGetBatteryIcon(t *testing.T) {
@@ -355,6 +356,15 @@ func TestNewTrayManager_DockerFields(t *testing.T) {
 	if manager.dockerStopAll != nil {
 		t.Error("dockerStopAll should be nil before Initialize")
 	}
+	if manager.systemMenu != nil {
+		t.Error("systemMenu should be nil before Initialize")
+	}
+	if manager.systemCPU != nil {
+		t.Error("systemCPU should be nil before Initialize")
+	}
+	if manager.systemMemory != nil {
+		t.Error("systemMemory should be nil before Initialize")
+	}
 }
 
 func TestTrayConfig_Defaults(t *testing.T) {
@@ -368,6 +378,9 @@ func TestTrayConfig_Defaults(t *testing.T) {
 	}
 	if cfg.DisableHyperX {
 		t.Error("DisableHyperX should default to false")
+	}
+	if cfg.DisableSystem {
+		t.Error("DisableSystem should default to false")
 	}
 }
 
@@ -424,6 +437,56 @@ func TestTrayManager_DisabledHyperX_NilGuard(t *testing.T) {
 
 	if manager.hyperxMenu != nil {
 		t.Error("hyperxMenu should remain nil when disabled")
+	}
+}
+
+func TestSystemFormatting(t *testing.T) {
+	normal := system.State{
+		Available:        true,
+		CPUPercent:       intPtr(18),
+		CPUPeakPercent:   intPtr(92),
+		MemoryPercent:    intPtr(32),
+		MemoryUsedBytes:  10 * 1024 * 1024 * 1024,
+		MemoryTotalBytes: 32 * 1024 * 1024 * 1024,
+	}
+
+	if got := formatSystemCPUMenuTitle(normal); got != "  ⚙️ CPU: 18%" {
+		t.Errorf("formatSystemCPUMenuTitle() = %q", got)
+	}
+	if got := formatSystemPeakMenuTitle(normal); got != "  🔥 CPU Peak: 92% last 60s" {
+		t.Errorf("formatSystemPeakMenuTitle() = %q", got)
+	}
+	if got := formatSystemMemoryMenuTitle(normal); got != "  🧠 Memory: 32% (10.0 GiB / 32.0 GiB)" {
+		t.Errorf("formatSystemMemoryMenuTitle() = %q", got)
+	}
+	if got := formatSystemMemoryTitle(32); got != "🧠 32%" {
+		t.Errorf("formatSystemMemoryTitle() = %q", got)
+	}
+
+	spiking := normal
+	spiking.CPUSpiking = true
+	if got := formatSystemCPUMenuTitle(spiking); got != "  🔥 CPU: 18%" {
+		t.Errorf("formatSystemCPUMenuTitle(spiking) = %q", got)
+	}
+	if got := formatSystemCPUTitle(87); got != "🔥 87%" {
+		t.Errorf("formatSystemCPUTitle() = %q", got)
+	}
+}
+
+func TestSystemFormatting_UnknownValues(t *testing.T) {
+	state := system.State{Available: true}
+
+	if got := formatSystemCPUMenuTitle(state); got != "  ⚙️ CPU: --" {
+		t.Errorf("formatSystemCPUMenuTitle() = %q", got)
+	}
+	if got := formatSystemPeakMenuTitle(state); got != "  🔥 CPU Peak: --" {
+		t.Errorf("formatSystemPeakMenuTitle() = %q", got)
+	}
+	if got := formatSystemMemoryMenuTitle(state); got != "  🧠 Memory: --" {
+		t.Errorf("formatSystemMemoryMenuTitle() = %q", got)
+	}
+	if got := formatSystemTooltip(state); got != "" {
+		t.Errorf("formatSystemTooltip() = %q", got)
 	}
 }
 

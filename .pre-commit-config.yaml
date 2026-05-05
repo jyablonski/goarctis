@@ -5,6 +5,30 @@ repos:
       - id: go-fmt
       - id: go-imports
 
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.12.1
+    hooks:
+      - id: golangci-lint
+        pass_filenames: false
+
+  - repo: local
+    hooks:
+      - id: gofmt-s-check
+        name: Verify gofmt -s
+        entry: bash scripts/check_gofmt_s.sh
+        language: system
+        pass_filenames: false
+        types: [go]
+
+      - id: deadcode
+        name: deadcode
+        entry: deadcode -test ./...
+        language: golang
+        additional_dependencies:
+          - golang.org/x/tools/cmd/deadcode@v0.44.0
+        pass_filenames: false
+        types: [go]
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:

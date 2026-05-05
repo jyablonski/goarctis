@@ -9,6 +9,7 @@ import (
 	"github.com/getlantern/systray"
 	"github.com/jyablonski/goarctis/pkg/docker"
 	"github.com/jyablonski/goarctis/pkg/protocol"
+	"github.com/jyablonski/goarctis/pkg/system"
 	"github.com/jyablonski/goarctis/pkg/version"
 )
 
@@ -16,6 +17,7 @@ type TrayConfig struct {
 	DisableGameBuds bool
 	DisableRazer    bool
 	DisableHyperX   bool
+	DisableSystem   bool
 }
 
 type TrayManager struct {
@@ -37,10 +39,16 @@ type TrayManager struct {
 	dockerStatus  *systray.MenuItem
 	dockerStopAll *systray.MenuItem
 
+	systemMenu   *systray.MenuItem
+	systemCPU    *systray.MenuItem
+	systemPeak   *systray.MenuItem
+	systemMemory *systray.MenuItem
+
 	config TrayConfig
 
 	devices     map[string]protocol.DeviceState
 	dockerState docker.DockerState
+	systemState system.State
 	mu          sync.RWMutex
 }
 
@@ -82,6 +90,19 @@ func (t *TrayManager) Initialize(cfg TrayConfig) {
 		systray.AddSeparator()
 		t.hyperxMenu = addDisabledHiddenMenuItem("🎧 HyperX Cloud Alpha Wireless", "HyperX Cloud Alpha Wireless")
 		t.hyperxBattery = addDisabledHiddenMenuItem("  Battery: --", "Battery level")
+	}
+
+	if !cfg.DisableSystem {
+		systray.AddSeparator()
+		t.systemMenu = systray.AddMenuItem("🖥️ System", "System resource utilization")
+		t.systemMenu.Disable()
+		t.systemCPU = systray.AddMenuItem("  ⚙️ CPU: checking...", "CPU utilization")
+		t.systemCPU.Disable()
+		t.systemPeak = systray.AddMenuItem("  🔥 CPU Peak: --", "Recent CPU peak")
+		t.systemPeak.Disable()
+		t.systemPeak.Hide()
+		t.systemMemory = systray.AddMenuItem("  🧠 Memory: checking...", "Memory utilization")
+		t.systemMemory.Disable()
 	}
 
 	systray.AddSeparator()
@@ -304,6 +325,18 @@ func (t *TrayManager) updateTrayIcon() {
 		tooltipParts = append(tooltipParts, fmt.Sprintf("Docker: %d container(s)", dockerCount))
 	}
 
+	if t.systemState.Available {
+		if t.systemState.CPUSpiking && t.systemState.CPUPercent != nil {
+			titleParts = append(titleParts, formatSystemCPUTitle(*t.systemState.CPUPercent))
+		}
+		if t.systemState.MemoryPercent != nil {
+			titleParts = append(titleParts, formatSystemMemoryTitle(*t.systemState.MemoryPercent))
+		}
+		if tooltip := formatSystemTooltip(t.systemState); tooltip != "" {
+			tooltipParts = append(tooltipParts, tooltip)
+		}
+	}
+
 	if len(titleParts) == 0 {
 		systray.SetTitle("🎧")
 		systray.SetTooltip(fmt.Sprintf("No devices connected (v%s)", version.Version))
@@ -326,6 +359,7 @@ func (t *TrayManager) UpdateDockerState(state docker.DockerState) {
 	if t.dockerMenu == nil {
 		return
 	}
+	defer t.updateTrayIcon()
 
 	if !state.Available {
 		t.dockerMenu.SetTitle("🐳 Docker (unavailable)")
@@ -351,6 +385,40 @@ func (t *TrayManager) UpdateDockerState(state docker.DockerState) {
 	}
 
 	log.Printf("Docker state updated: available=%v, containers=%d", state.Available, count)
+}
+
+func (t *TrayManager) UpdateSystemState(state system.State) {
+	t.mu.Lock()
+	t.systemState = state
+	t.mu.Unlock()
+
+	if t.systemMenu == nil {
+		return
+	}
+	defer t.updateTrayIcon()
+
+	if !state.Available {
+		t.systemMenu.SetTitle("🖥️ System (unavailable)")
+		t.systemCPU.SetTitle("  ⚙️ CPU: unavailable")
+		t.systemMemory.SetTitle("  🧠 Memory: unavailable")
+		t.systemPeak.Hide()
+		return
+	}
+
+	t.systemMenu.SetTitle("🖥️ System")
+	t.systemCPU.SetTitle(formatSystemCPUMenuTitle(state))
+	t.systemMemory.SetTitle(formatSystemMemoryMenuTitle(state))
+
+	if state.CPUPeakPercent == nil {
+		t.systemPeak.Hide()
+	} else {
+		t.systemPeak.SetTitle(formatSystemPeakMenuTitle(state))
+		t.systemPeak.Show()
+		t.systemPeak.Enable()
+	}
+
+	log.Printf("System state updated: cpu=%s, memory=%s",
+		formatOptionalPercent(state.CPUPercent), formatOptionalPercent(state.MemoryPercent))
 }
 
 func (t *TrayManager) DockerStopAllChannel() <-chan struct{} {
@@ -430,6 +498,76 @@ func formatTrayBattery(icon string, battery int, charging bool) string {
 	default:
 		return fmt.Sprintf("%s --", icon)
 	}
+}
+
+func formatSystemCPUMenuTitle(state system.State) string {
+	if state.CPUPercent == nil {
+		return "  ⚙️ CPU: --"
+	}
+	icon := "⚙️"
+	if state.CPUSpiking {
+		icon = "🔥"
+	}
+	return fmt.Sprintf("  %s CPU: %d%%", icon, *state.CPUPercent)
+}
+
+func formatSystemPeakMenuTitle(state system.State) string {
+	if state.CPUPeakPercent == nil {
+		return "  🔥 CPU Peak: --"
+	}
+	return fmt.Sprintf("  🔥 CPU Peak: %d%% last 60s", *state.CPUPeakPercent)
+}
+
+func formatSystemMemoryMenuTitle(state system.State) string {
+	if state.MemoryPercent == nil {
+		return "  🧠 Memory: --"
+	}
+	if state.MemoryTotalBytes == 0 {
+		return fmt.Sprintf("  🧠 Memory: %d%%", *state.MemoryPercent)
+	}
+	return fmt.Sprintf("  🧠 Memory: %d%% (%s / %s)",
+		*state.MemoryPercent,
+		formatBytes(state.MemoryUsedBytes),
+		formatBytes(state.MemoryTotalBytes),
+	)
+}
+
+func formatSystemCPUTitle(percent int) string {
+	return fmt.Sprintf("🔥 %d%%", percent)
+}
+
+func formatSystemMemoryTitle(percent int) string {
+	return fmt.Sprintf("🧠 %d%%", percent)
+}
+
+func formatSystemTooltip(state system.State) string {
+	var parts []string
+	if state.CPUPercent != nil {
+		cpu := fmt.Sprintf("CPU: %d%%", *state.CPUPercent)
+		if state.CPUSpiking {
+			cpu += " spiking"
+		}
+		parts = append(parts, cpu)
+	}
+	if state.MemoryPercent != nil {
+		parts = append(parts, fmt.Sprintf("Memory: %d%%", *state.MemoryPercent))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "System: " + strings.Join(parts, ", ")
+}
+
+func formatBytes(bytes uint64) string {
+	const gib = 1024 * 1024 * 1024
+	return fmt.Sprintf("%.1f GiB", float64(bytes)/gib)
+}
+
+func formatOptionalPercent(percent *int) string {
+	if percent == nil {
+		return "--"
+	}
+	return fmt.Sprintf("%d%%", *percent)
 }
 
 func formatGameBudsBattery(battery *int, status *protocol.EarbudStatus, side string) string {

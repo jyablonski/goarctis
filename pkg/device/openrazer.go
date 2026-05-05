@@ -95,6 +95,17 @@ func (r *RazerDevice) SetOnStateChange(callback func(protocol.DeviceState)) {
 	r.mu.Unlock()
 }
 
+func (r *RazerDevice) emitCurrentState() {
+	r.mu.RLock()
+	currentState := r.state
+	onChange := r.onChange
+	r.mu.RUnlock()
+
+	if onChange != nil {
+		onChange(currentState)
+	}
+}
+
 func (r *RazerDevice) setState(update func(*protocol.DeviceState)) {
 	r.mu.Lock()
 	oldState := r.state
@@ -117,6 +128,7 @@ func (r *RazerDevice) setDisconnected() {
 
 func (r *RazerDevice) Start() error {
 	log.Printf("Starting Razer device monitoring for %s", r.deviceName)
+	r.emitCurrentState()
 	go r.pollLoop()
 	return nil
 }

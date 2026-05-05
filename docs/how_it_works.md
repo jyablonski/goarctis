@@ -32,11 +32,21 @@ For Razer devices, the application uses D-Bus to communicate with the OpenRazer 
 
 3. **Reconnection Handling**: The application includes robust error handling for mode switches (wired ↔ wireless). When connection errors are detected, it automatically attempts to reconnect with exponential backoff and can even restart the OpenRazer daemon if needed.
 
+### Host CPU and Memory - Linux procfs
+
+The application reads Linux procfs directly for lightweight host resource monitoring:
+
+1. **Memory Utilization**: The system monitor reads `/proc/meminfo` and computes used memory from `MemTotal - MemAvailable`. On older kernels without `MemAvailable`, it falls back to the usual free/buffer/cache fields.
+
+2. **CPU Utilization**: The system monitor reads the aggregate `cpu` line from `/proc/stat`. Because those values are cumulative counters, CPU utilization is calculated from the difference between two samples.
+
+3. **Spike Detection**: CPU samples are kept in a short rolling window. The tray can show a recent peak and hold a spike indicator briefly so short CPU bursts are visible long enough to notice.
+
 ### System Tray Display
 
 The system tray UI (`pkg/ui/tray.go`) provides real-time visualization:
 
-1. **Icon Updates**: The tray icon title displays battery levels using emojis and percentages (e.g., `🎧 85% 🖱️ 42%`). The icon updates in real-time as device states change.
+1. **Icon Updates**: The tray icon title displays battery levels, Docker counts, memory, and CPU spikes using emojis and percentages (e.g., `🎧 85% 🖱️ 42% 🧠 32%`). The icon updates in real-time as monitored state changes.
 
 2. **Menu Structure**: Clicking the tray icon reveals a detailed menu:
 
@@ -44,8 +54,10 @@ The system tray UI (`pkg/ui/tray.go`) provides real-time visualization:
    - Battery levels for individual earbuds (GameBuds)
    - Charging/wireless mode indicators
    - ANC mode display (GameBuds)
+   - CPU, CPU peak, and memory utilization
+   - Docker container count and stop-all action
 
-3. **State Synchronization**: The `DeviceManager` (`pkg/device/manager.go`) coordinates multiple devices and routes state change callbacks to the UI. When any device state changes, the tray icon and menu items are updated accordingly.
+3. **State Synchronization**: The `DeviceManager` (`pkg/device/manager.go`) coordinates multiple devices and routes state change callbacks to the UI. Docker and system monitors follow the same callback pattern with their own state types. When monitored state changes, the tray icon and menu items are updated accordingly.
 
 ### Architecture Overview
 
@@ -53,7 +65,9 @@ The application follows a modular design with clear separation of concerns:
 
 - **Device Layer** (`pkg/device/`): Abstracts device-specific communication (HID raw for GameBuds, D-Bus for Razer)
 - **Protocol Layer** (`pkg/protocol/`): Parses device-specific data formats into a unified `DeviceState` structure
+- **System Layer** (`pkg/system/`): Reads Linux procfs and turns CPU/memory counters into tray-ready state
+- **Docker Layer** (`pkg/docker/`): Polls Docker container status through the Docker CLI
 - **UI Layer** (`pkg/ui/`): Handles system tray rendering and user interaction
 - **Manager Layer**: Coordinates device discovery, monitoring, and state propagation
 
-All device communication happens in background goroutines, ensuring the UI remains responsive. The main goroutine runs the system tray event loop, while device monitoring runs concurrently.
+All device, Docker, and system monitoring happens in background goroutines, ensuring the UI remains responsive. The main goroutine runs the system tray event loop, while monitoring runs concurrently.
