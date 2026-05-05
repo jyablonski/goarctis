@@ -21,7 +21,6 @@ const (
 	_HIDIOCGRDESCSIZE = 0x01
 	_HIDIOCGRDESC     = 0x02
 	_HIDIOCGRAWINFO   = 0x03
-	_HIDIOCSFEATURE   = 0x06
 	_HIDIOCGFEATURE   = 0x07
 
 	gameBudsPollInterval = 5 * time.Second
@@ -45,10 +44,6 @@ func _IOWR(typ, nr, size uint) uint {
 
 func HIDIOCGFEATURE(length uint) uint {
 	return _IOWR('H', _HIDIOCGFEATURE, length)
-}
-
-func HIDIOCSFEATURE(length uint) uint {
-	return _IOWR('H', _HIDIOCSFEATURE, length)
 }
 
 type FileSystem interface {
