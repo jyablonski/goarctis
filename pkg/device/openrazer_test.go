@@ -104,46 +104,45 @@ func TestRazerSetStateComparesPointerValues(t *testing.T) {
 	}
 }
 
-type mockRazerDevice struct {
-	id        string
-	name      string
-	state     protocol.DeviceState
-	connected bool
-}
+func TestRazerStartEmitsCurrentState(t *testing.T) {
+	battery := 70
+	isCharging := false
+	r := &RazerDevice{
+		deviceSerial: "razer-1",
+		deviceName:   "Razer Test Device",
+		stopChan:     make(chan struct{}),
+		state: protocol.DeviceState{
+			DeviceID:    "razer-1",
+			DeviceType:  string(DeviceTypeRazerDeathAdder),
+			Battery:     &battery,
+			IsCharging:  &isCharging,
+			IsConnected: true,
+		},
+	}
 
-func (m *mockRazerDevice) GetID() string {
-	return m.id
-}
+	var got protocol.DeviceState
+	var callbackCount int
+	r.SetOnStateChange(func(state protocol.DeviceState) {
+		got = state
+		callbackCount++
+	})
 
-func (m *mockRazerDevice) GetName() string {
-	return m.name
-}
+	if err := r.Start(); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	if err := r.Stop(); err != nil {
+		t.Fatalf("Stop returned error: %v", err)
+	}
 
-func (m *mockRazerDevice) GetType() DeviceType {
-	return DeviceTypeRazerDeathAdder
-}
-
-func (m *mockRazerDevice) GetState() protocol.DeviceState {
-	return m.state
-}
-
-func (m *mockRazerDevice) IsConnected() bool {
-	return m.connected
-}
-
-func (m *mockRazerDevice) Start() error {
-	return nil
-}
-
-func (m *mockRazerDevice) Stop() error {
-	return nil
-}
-
-func (m *mockRazerDevice) Close() error {
-	return nil
-}
-
-func (m *mockRazerDevice) SetOnStateChange(callback func(protocol.DeviceState)) {
+	if callbackCount != 1 {
+		t.Fatalf("callback count = %d, want 1", callbackCount)
+	}
+	if got.Battery == nil || *got.Battery != 70 {
+		t.Fatalf("callback battery = %v, want 70", got.Battery)
+	}
+	if !got.IsConnected {
+		t.Fatal("callback state should be connected")
+	}
 }
 
 func TestDeviceType_String(t *testing.T) {

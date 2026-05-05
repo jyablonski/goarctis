@@ -5,6 +5,7 @@ import (
 
 	"github.com/jyablonski/goarctis/pkg/docker"
 	"github.com/jyablonski/goarctis/pkg/protocol"
+	"github.com/jyablonski/goarctis/pkg/system"
 )
 
 func TestTrayManager_SetStatus(t *testing.T) {
@@ -121,6 +122,33 @@ func TestTrayManager_UpdateDockerState_WithoutInitialize(t *testing.T) {
 	}
 	if stored.RunningCount() != 1 {
 		t.Errorf("Docker RunningCount = %d, want 1", stored.RunningCount())
+	}
+}
+
+func TestTrayManager_UpdateSystemState_WithoutInitialize(t *testing.T) {
+	manager := NewTrayManager()
+
+	state := system.State{
+		Available:        true,
+		CPUPercent:       intPtr(18),
+		MemoryPercent:    intPtr(32),
+		MemoryUsedBytes:  10 * 1024 * 1024 * 1024,
+		MemoryTotalBytes: 32 * 1024 * 1024 * 1024,
+	}
+	manager.UpdateSystemState(state)
+
+	manager.mu.RLock()
+	stored := manager.systemState
+	manager.mu.RUnlock()
+
+	if !stored.Available {
+		t.Error("System state should be available")
+	}
+	if stored.CPUPercent == nil || *stored.CPUPercent != 18 {
+		t.Errorf("CPUPercent = %v, want 18", stored.CPUPercent)
+	}
+	if stored.MemoryPercent == nil || *stored.MemoryPercent != 32 {
+		t.Errorf("MemoryPercent = %v, want 32", stored.MemoryPercent)
 	}
 }
 

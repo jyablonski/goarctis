@@ -2,6 +2,7 @@ package device
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -85,8 +86,8 @@ func TestFindDevices_Success(t *testing.T) {
 			"/sys/class/hidraw/hidraw0/device/../bInterfaceNumber": []byte("03\n"),
 			"/sys/class/hidraw/hidraw1/device/uevent":              []byte("HID_ID=0003:00001038:0000230A\n"),
 			"/sys/class/hidraw/hidraw1/device/../bInterfaceNumber": []byte("04\n"),
-			"/dev/hidraw0": []byte{},
-			"/dev/hidraw1": []byte{},
+			"/dev/hidraw0": {},
+			"/dev/hidraw1": {},
 		},
 	}
 
@@ -115,6 +116,9 @@ func TestFindDevices_NoDevices(t *testing.T) {
 
 	if err == nil {
 		t.Error("Expected error when no devices found")
+	}
+	if !errors.Is(err, ErrNoGameBudsHIDRawDevices) {
+		t.Errorf("FindDevices error = %v, want ErrNoGameBudsHIDRawDevices", err)
 	}
 
 	expectedError := "no GameBuds hidraw devices found"
@@ -153,7 +157,7 @@ func TestFindDevices_CaseInsensitiveHIDID(t *testing.T) {
 		files: map[string][]byte{
 			"/sys/class/hidraw/hidraw0/device/uevent":              []byte("HID_ID=0003:00001038:0000230a\n"),
 			"/sys/class/hidraw/hidraw0/device/../bInterfaceNumber": []byte("03\n"),
-			"/dev/hidraw0": []byte{},
+			"/dev/hidraw0": {},
 		},
 	}
 
@@ -186,6 +190,9 @@ func TestFindDevices_CannotOpenDevice(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error when cannot open devices")
 	}
+	if !errors.Is(err, ErrNoHIDRawDevicesOpened) {
+		t.Errorf("FindDevices error = %v, want ErrNoHIDRawDevicesOpened", err)
+	}
 
 	expectedError := "could not open any hidraw devices"
 	if err.Error() != expectedError {
@@ -201,7 +208,9 @@ func TestSetOnStateChange(t *testing.T) {
 		callbackCalled = true
 	})
 
-	manager.protocol.ParseReport([]byte{0xB7, 75, 80})
+	if err := manager.protocol.ParseReport([]byte{0xB7, 75, 80}); err != nil {
+		t.Fatalf("ParseReport returned error: %v", err)
+	}
 
 	if !callbackCalled {
 		t.Error("Callback was not called")
@@ -211,8 +220,12 @@ func TestSetOnStateChange(t *testing.T) {
 func TestGetState(t *testing.T) {
 	manager := NewHIDRawManager()
 
-	manager.protocol.ParseReport([]byte{0xB7, 75, 80})
-	manager.protocol.ParseReport([]byte{0xBD, 0x01})
+	if err := manager.protocol.ParseReport([]byte{0xB7, 75, 80}); err != nil {
+		t.Fatalf("battery ParseReport returned error: %v", err)
+	}
+	if err := manager.protocol.ParseReport([]byte{0xBD, 0x01}); err != nil {
+		t.Fatalf("ANC ParseReport returned error: %v", err)
+	}
 
 	state := manager.GetState()
 
@@ -244,7 +257,7 @@ func TestStopAndClose(t *testing.T) {
 		},
 		files: map[string][]byte{
 			"/sys/class/hidraw/hidraw0/device/uevent": []byte("HID_ID=0003:00001038:0000230A\n"),
-			"/dev/hidraw0": []byte{},
+			"/dev/hidraw0": {},
 		},
 	}
 

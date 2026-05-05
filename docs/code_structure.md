@@ -17,21 +17,38 @@ goarctis/
 │   │   ├── interface.go     # BatteryDevice interface
 │   │   ├── manager.go       # Multi-device coordination
 │   │   ├── hidraw.go        # SteelSeries GameBuds implementation
+│   │   ├── hyperx.go        # HyperX Cloud Alpha Wireless implementation
 │   │   ├── openrazer.go     # Razer devices implementation
 │   │   └── *_test.go        # Test files
+│   │
+│   ├── docker/              # Docker container monitoring
+│   │   ├── monitor.go       # Docker CLI polling and stop-all action
+│   │   └── monitor_test.go
 │   │
 │   ├── protocol/            # Protocol parsing
 │   │   ├── handler.go       # SteelSeries HID report parser
 │   │   └── handler_test.go
 │   │
-│   └── ui/                   # User interface
-│       ├── tray.go          # System tray implementation
-│       └── tray_test.go
+│   ├── system/              # Host resource monitoring
+│   │   ├── monitor.go       # CPU/memory polling and spike detection
+│   │   ├── proc.go          # Linux procfs parsing
+│   │   └── *_test.go
+│   │
+│   ├── selfupdate/          # GitHub release self-update flow
+│   │   ├── selfupdate.go
+│   │   └── selfupdate_test.go
+│   │
+│   ├── ui/                   # User interface
+│   │   ├── tray.go          # System tray implementation
+│   │   └── tray_test.go
+│
+│   └── version/              # Build-time version injection
+│       └── version.go
 │
 ├── docs/                     # Documentation
-│   ├── TESTING.md           # Testing guide
-│   ├── NOTES.md             # Development notes
-│   └── STRUCTURE.md         # This file
+│   ├── code_structure.md    # This file
+│   ├── cpu_memory_monitoring_plan.md
+│   └── how_it_works.md
 │
 ├── scripts/                  # Utility scripts
 │   └── update_systemd.sh    # Systemd service setup
@@ -59,15 +76,30 @@ goarctis/
 - **interface.go**: Defines the `BatteryDevice` interface that all device implementations must satisfy
 - **manager.go**: `DeviceManager` coordinates discovery and lifecycle of multiple devices
 - **hidraw.go**: SteelSeries GameBuds implementation using HID raw device access
+- **hyperx.go**: HyperX Cloud Alpha Wireless implementation using hidraw request/response polling
 - **openrazer.go**: Razer devices implementation using OpenRazer D-Bus
+
+### `pkg/docker/` - Docker Monitoring
+
+- **monitor.go**: Polls `docker ps --format` for running container state and exposes a stop-all helper
 
 ### `pkg/protocol/` - Protocol Parsing
 
 - **handler.go**: Parses SteelSeries-specific HID reports into structured `DeviceState`
 
+### `pkg/system/` - Host Resource Monitoring
+
+- **proc.go**: Reads `/proc/stat` and `/proc/meminfo` for CPU and memory samples
+- **monitor.go**: Tracks current CPU, recent CPU peak, spike hold state, and memory utilization
+
 ### `pkg/ui/` - User Interface
 
 - **tray.go**: System tray implementation using systray library
+
+### `pkg/selfupdate/` and `pkg/version/` - Support Packages
+
+- **selfupdate.go**: Updates the installed binary from GitHub release assets
+- **version.go**: Holds the build-time version string set by Makefile ldflags
 
 ## Design Principles
 

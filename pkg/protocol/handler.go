@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"errors"
 	"fmt"
 	"log"
 )
@@ -14,6 +15,11 @@ const (
 	ReportWearStatus = 0xB5
 	ReportANCMode    = 0xBD
 	ReportInEarEvent = 0xC6
+)
+
+var (
+	ErrEmptyReport                   = errors.New("empty report")
+	ErrCommandEncodingNotImplemented = errors.New("command encoding not yet implemented")
 )
 
 type ANCMode int
@@ -180,7 +186,7 @@ func (h *Handler) SetOnChange(callback func(DeviceState)) {
 
 func (h *Handler) ParseReport(data []byte) error {
 	if len(data) == 0 {
-		return fmt.Errorf("empty report")
+		return ErrEmptyReport
 	}
 
 	reportID := data[0]
@@ -362,9 +368,10 @@ func (h *Handler) parseInEarEvent(data []byte) {
 	}
 
 	event := data[1]
-	if event == 1 {
+	switch event {
+	case 1:
 		log.Println("👂 Earbud removed from ear")
-	} else if event == 0 {
+	case 0:
 		log.Println("👂 Earbud placed in ear")
 	}
 }
@@ -375,5 +382,5 @@ func (h *Handler) GetState() DeviceState {
 
 func (h *Handler) EncodeCommand(command string, params ...interface{}) ([]byte, error) {
 	// TODO: Implement when we figure out how to send commands
-	return nil, fmt.Errorf("command encoding not yet implemented")
+	return nil, ErrCommandEncodingNotImplemented
 }

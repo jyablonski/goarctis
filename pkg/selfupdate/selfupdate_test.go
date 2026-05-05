@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -46,7 +47,9 @@ func TestDownloadAndReplace(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write(fakeContent)
+		if _, err := w.Write(fakeContent); err != nil {
+			t.Errorf("failed to write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -92,15 +95,15 @@ func TestDownloadAndReplaceHTTPError(t *testing.T) {
 	}
 
 	err := downloadAndReplace(execPath, server.URL+"/missing")
-	if err == nil {
-		t.Fatal("expected error for HTTP 404, got nil")
+	if !errors.Is(err, ErrDownloadStatus) {
+		t.Fatalf("downloadAndReplace error = %v, want ErrDownloadStatus", err)
 	}
 }
 
 func TestGetLatestRelease(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		if _, err := fmt.Fprint(w, `{
 			"tag_name": "v0.3.0",
 			"assets": [
 				{
@@ -108,7 +111,9 @@ func TestGetLatestRelease(t *testing.T) {
 					"browser_download_url": "https://example.com/goarctis-linux-amd64"
 				}
 			]
-		}`)
+		}`); err != nil {
+			t.Errorf("failed to write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -145,8 +150,8 @@ func TestGetLatestReleaseAPIError(t *testing.T) {
 	defer func() { githubAPI = originalAPI }()
 
 	_, err := getLatestRelease()
-	if err == nil {
-		t.Fatal("expected error for API 500, got nil")
+	if !errors.Is(err, ErrGitHubAPIStatus) {
+		t.Fatalf("getLatestRelease error = %v, want ErrGitHubAPIStatus", err)
 	}
 }
 

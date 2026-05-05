@@ -2,6 +2,7 @@ package selfupdate
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/jyablonski/goarctis/pkg/version"
@@ -21,6 +23,12 @@ const (
 
 var (
 	githubAPI = "https://api.github.com"
+)
+
+var (
+	ErrReleaseAssetNotFound = errors.New("release asset not found")
+	ErrGitHubAPIStatus      = errors.New("GitHub API returned non-OK status")
+	ErrDownloadStatus       = errors.New("download returned non-OK status")
 )
 
 type Release struct {
@@ -63,7 +71,7 @@ func Run() error {
 	}
 
 	if downloadURL == "" {
-		return fmt.Errorf("no release asset found for %s/%s", runtime.GOOS, runtime.GOARCH)
+		return fmt.Errorf("%w for %s/%s", ErrReleaseAssetNotFound, runtime.GOOS, runtime.GOARCH)
 	}
 
 	execPath, err := os.Executable()
@@ -98,10 +106,10 @@ func getLatestRelease() (*Release, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w: %d", ErrGitHubAPIStatus, resp.StatusCode)
 	}
 
 	var release Release
@@ -129,10 +137,10 @@ func compareVersions(current, latest string) int {
 	for i := 0; i < maxLen; i++ {
 		var currentPart, latestPart int
 		if i < len(currentParts) {
-			fmt.Sscanf(currentParts[i], "%d", &currentPart)
+			currentPart = parseVersionPart(currentParts[i])
 		}
 		if i < len(latestParts) {
-			fmt.Sscanf(latestParts[i], "%d", &latestPart)
+			latestPart = parseVersionPart(latestParts[i])
 		}
 
 		if currentPart < latestPart {
@@ -144,6 +152,14 @@ func compareVersions(current, latest string) int {
 	}
 
 	return 0
+}
+
+func parseVersionPart(part string) int {
+	value, err := strconv.Atoi(part)
+	if err != nil {
+		return 0
+	}
+	return value
 }
 
 // downloadAndReplace downloads the new binary from downloadURL and replaces
@@ -159,10 +175,10 @@ func downloadAndReplace(execPath, downloadURL string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download failed with status %d", resp.StatusCode)
+		return fmt.Errorf("%w: %d", ErrDownloadStatus, resp.StatusCode)
 	}
 
 	out, err := os.Create(tempFile)
@@ -171,27 +187,27 @@ func downloadAndReplace(execPath, downloadURL string) error {
 	}
 
 	if _, err := io.Copy(out, resp.Body); err != nil {
-		out.Close()
-		os.Remove(tempFile)
-		return err
+		closeErr := out.Close()
+		_ = os.Remove(tempFile)
+		return errors.Join(err, closeErr)
 	}
 
 	if err := out.Close(); err != nil {
-		os.Remove(tempFile)
+		_ = os.Remove(tempFile)
 		return err
 	}
 
 	if err := os.Chmod(tempFile, 0755); err != nil {
-		os.Remove(tempFile)
+		_ = os.Remove(tempFile)
 		return err
 	}
 
 	if err := os.Rename(tempFile, execPath); err != nil {
 		if copyErr := crossFSReplace(tempFile, execPath); copyErr != nil {
-			os.Remove(tempFile)
+			_ = os.Remove(tempFile)
 			return fmt.Errorf("rename failed (%v) and cross-fs copy also failed: %w", err, copyErr)
 		}
-		os.Remove(tempFile)
+		_ = os.Remove(tempFile)
 	}
 
 	return nil
@@ -203,7 +219,7 @@ func crossFSReplace(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 
 	out, err := os.Create(dst)
 	if err != nil {
@@ -211,8 +227,8 @@ func crossFSReplace(src, dst string) error {
 	}
 
 	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
+		closeErr := out.Close()
+		return errors.Join(err, closeErr)
 	}
 
 	if err := out.Close(); err != nil {

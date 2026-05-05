@@ -35,7 +35,13 @@ const (
 	hyperxDeviceName = "HyperX Cloud Alpha Wireless"
 )
 
-var errHyperXReadTimeout = errors.New("hyperx read timeout")
+var (
+	errHyperXReadTimeout     = errors.New("hyperx read timeout")
+	errHyperXUnexpectedPoll  = errors.New("hyperx unexpected poll event")
+	ErrHyperXNotFound        = errors.New("HyperX Cloud Alpha Wireless not found")
+	ErrHyperXDevicePathUnset = errors.New("hyperx device path not set")
+	ErrHyperXNoValidResponse = errors.New("hyperx no valid response")
+)
 
 // hidTransport abstracts raw HID read/write so the three-round protocol,
 // drain, and header validation are testable without real syscalls.
@@ -81,7 +87,7 @@ func (t *realHIDTransport) ReadTimeout(p []byte, timeout time.Duration) (int, er
 			return 0, errHyperXReadTimeout
 		}
 		if fds[0].Revents&unix.POLLIN == 0 {
-			return 0, fmt.Errorf("poll revents=0x%x", fds[0].Revents)
+			return 0, fmt.Errorf("%w: revents=0x%x", errHyperXUnexpectedPoll, fds[0].Revents)
 		}
 		return unix.Read(t.fd, p)
 	}
@@ -160,7 +166,7 @@ func (h *HyperXDevice) FindDevice() error {
 		return nil
 	}
 
-	return fmt.Errorf("HyperX Cloud Alpha Wireless not found")
+	return ErrHyperXNotFound
 }
 
 func (h *HyperXDevice) GetID() string { return hyperxDeviceID }
@@ -189,7 +195,7 @@ func (h *HyperXDevice) SetOnStateChange(callback func(protocol.DeviceState)) {
 
 func (h *HyperXDevice) Start() error {
 	if h.hidrawPath == "" {
-		return fmt.Errorf("device path not set; call FindDevice first")
+		return fmt.Errorf("%w: call FindDevice first", ErrHyperXDevicePathUnset)
 	}
 
 	tr, err := h.transportNew(h.hidrawPath)
@@ -216,7 +222,9 @@ func (h *HyperXDevice) Stop() error {
 }
 
 func (h *HyperXDevice) Close() error {
-	h.Stop()
+	if err := h.Stop(); err != nil {
+		return err
+	}
 	h.mu.Lock()
 	tr := h.transport
 	h.transport = nil
@@ -320,7 +328,7 @@ func (h *HyperXDevice) doRound(tr hidTransport, subcmd byte) ([]byte, error) {
 		log.Printf("🎧 HyperX: header mismatch for 0x%02X (got %02X %02X %02X), retrying",
 			subcmd, resp[0], resp[1], resp[2])
 	}
-	return nil, fmt.Errorf("no valid response for 0x%02X after %d reads", subcmd, hyperxHeaderRetries)
+	return nil, fmt.Errorf("%w for 0x%02X after %d reads", ErrHyperXNoValidResponse, subcmd, hyperxHeaderRetries)
 }
 
 func (h *HyperXDevice) setBattery(level int) {

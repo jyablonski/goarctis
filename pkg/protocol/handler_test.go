@@ -1,8 +1,16 @@
 package protocol
 
 import (
+	"errors"
 	"testing"
 )
+
+func TestParseReport_EmptyReportSentinel(t *testing.T) {
+	h := NewHandler()
+	if err := h.ParseReport(nil); !errors.Is(err, ErrEmptyReport) {
+		t.Fatalf("ParseReport(nil) error = %v, want ErrEmptyReport", err)
+	}
+}
 
 func TestParseBattery(t *testing.T) {
 	tests := []struct {
@@ -240,7 +248,9 @@ func TestStateCallback(t *testing.T) {
 		callCount++
 	})
 
-	h.ParseReport([]byte{0xB7, 75, 80})
+	if err := h.ParseReport([]byte{0xB7, 75, 80}); err != nil {
+		t.Fatalf("ParseReport returned error: %v", err)
+	}
 	if callCount != 1 {
 		t.Errorf("Expected 1 callback, got %d", callCount)
 	}
@@ -252,12 +262,16 @@ func TestStateCallback(t *testing.T) {
 		t.Errorf("Expected left battery 75, got %d", val)
 	}
 
-	h.ParseReport([]byte{0xB7, 75, 80})
+	if err := h.ParseReport([]byte{0xB7, 75, 80}); err != nil {
+		t.Fatalf("duplicate ParseReport returned error: %v", err)
+	}
 	if callCount != 1 {
 		t.Errorf("Expected still 1 callback after duplicate, got %d", callCount)
 	}
 
-	h.ParseReport([]byte{0xB7, 74, 80})
+	if err := h.ParseReport([]byte{0xB7, 74, 80}); err != nil {
+		t.Fatalf("changed ParseReport returned error: %v", err)
+	}
 	if callCount != 2 {
 		t.Errorf("Expected 2 callbacks after change, got %d", callCount)
 	}
@@ -326,9 +340,15 @@ func TestDeviceStateString(t *testing.T) {
 
 func TestGetState(t *testing.T) {
 	h := NewHandler()
-	h.ParseReport([]byte{0xB7, 75, 80})
-	h.ParseReport([]byte{0xB5, 0x01, 0x01, 0x03, 0x02})
-	h.ParseReport([]byte{0xBD, 0x01})
+	if err := h.ParseReport([]byte{0xB7, 75, 80}); err != nil {
+		t.Fatalf("battery ParseReport returned error: %v", err)
+	}
+	if err := h.ParseReport([]byte{0xB5, 0x01, 0x01, 0x03, 0x02}); err != nil {
+		t.Fatalf("wear status ParseReport returned error: %v", err)
+	}
+	if err := h.ParseReport([]byte{0xBD, 0x01}); err != nil {
+		t.Fatalf("ANC ParseReport returned error: %v", err)
+	}
 
 	state := h.GetState()
 

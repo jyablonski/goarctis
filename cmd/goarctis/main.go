@@ -14,6 +14,7 @@ import (
 	"github.com/jyablonski/goarctis/pkg/docker"
 	"github.com/jyablonski/goarctis/pkg/protocol"
 	"github.com/jyablonski/goarctis/pkg/selfupdate"
+	"github.com/jyablonski/goarctis/pkg/system"
 	"github.com/jyablonski/goarctis/pkg/ui"
 	"github.com/jyablonski/goarctis/pkg/version"
 )
@@ -22,9 +23,11 @@ var (
 	deviceManager   *device.DeviceManager
 	trayManager     *ui.TrayManager
 	dockerMonitor   *docker.Monitor
+	systemMonitor   *system.Monitor
 	disableGameBuds bool
 	disableRazer    bool
 	disableHyperX   bool
+	disableSystem   bool
 )
 
 func main() {
@@ -33,6 +36,7 @@ func main() {
 	flag.BoolVar(&disableGameBuds, "disable-gamebuds", false, "Disable SteelSeries GameBuds monitoring")
 	flag.BoolVar(&disableRazer, "disable-razer", false, "Disable Razer device monitoring")
 	flag.BoolVar(&disableHyperX, "disable-hyperx", false, "Disable HyperX Cloud Alpha Wireless monitoring")
+	flag.BoolVar(&disableSystem, "disable-system", false, "Disable CPU and memory monitoring")
 	flag.Parse()
 
 	if *showVersion {
@@ -70,6 +74,7 @@ func onReady() {
 		DisableGameBuds: disableGameBuds,
 		DisableRazer:    disableRazer,
 		DisableHyperX:   disableHyperX,
+		DisableSystem:   disableSystem,
 	})
 
 	deviceManager = device.NewDeviceManager()
@@ -105,6 +110,14 @@ func onReady() {
 	})
 	dockerMonitor.Start()
 
+	if !disableSystem {
+		systemMonitor = system.NewMonitor(system.DefaultPollInterval)
+		systemMonitor.SetOnChange(func(state system.State) {
+			trayManager.UpdateSystemState(state)
+		})
+		systemMonitor.Start()
+	}
+
 	go func() {
 		runner := &docker.ExecCommandRunner{}
 		for range trayManager.DockerStopAllChannel() {
@@ -135,6 +148,11 @@ func cleanup() {
 	if dockerMonitor != nil {
 		log.Println("Stopping Docker monitor")
 		dockerMonitor.Stop()
+	}
+
+	if systemMonitor != nil {
+		log.Println("Stopping system monitor")
+		systemMonitor.Stop()
 	}
 
 	if deviceManager != nil {

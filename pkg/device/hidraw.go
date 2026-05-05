@@ -1,9 +1,9 @@
 package device
 
 import (
+	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"syscall"
@@ -21,22 +21,21 @@ const (
 	_HIDIOCGRDESCSIZE = 0x01
 	_HIDIOCGRDESC     = 0x02
 	_HIDIOCGRAWINFO   = 0x03
-	_HIDIOCSFEATURE   = 0x06
 	_HIDIOCGFEATURE   = 0x07
 
 	gameBudsPollInterval = 5 * time.Second
 )
 
+var (
+	ErrNoGameBudsHIDRawDevices = errors.New("no GameBuds hidraw devices found")
+	ErrNoHIDRawDevicesOpened   = errors.New("could not open any hidraw devices")
+	ErrNoDevicesToMonitor      = errors.New("no devices to monitor")
+	ErrFileDescriptorMissing   = errors.New("file descriptor not available")
+	ErrHIDRawIOCTLFailed       = errors.New("hidraw ioctl failed")
+)
+
 func _IOC(dir, typ, nr, size uint) uint {
 	return (dir << 30) | (typ << 8) | nr | (size << 16)
-}
-
-func _IOR(typ, nr, size uint) uint {
-	return _IOC(2, typ, nr, size)
-}
-
-func _IOW(typ, nr, size uint) uint {
-	return _IOC(1, typ, nr, size)
 }
 
 func _IOWR(typ, nr, size uint) uint {
@@ -45,10 +44,6 @@ func _IOWR(typ, nr, size uint) uint {
 
 func HIDIOCGFEATURE(length uint) uint {
 	return _IOWR('H', _HIDIOCGFEATURE, length)
-}
-
-func HIDIOCSFEATURE(length uint) uint {
-	return _IOWR('H', _HIDIOCSFEATURE, length)
 }
 
 type FileSystem interface {
@@ -60,11 +55,24 @@ type FileSystem interface {
 type RealFileSystem struct{}
 
 func (fs RealFileSystem) ReadDir(dirname string) ([]os.FileInfo, error) {
-	return ioutil.ReadDir(dirname)
+	entries, err := os.ReadDir(dirname)
+	if err != nil {
+		return nil, err
+	}
+
+	infos := make([]os.FileInfo, 0, len(entries))
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
+		infos = append(infos, info)
+	}
+	return infos, nil
 }
 
 func (fs RealFileSystem) ReadFile(filename string) ([]byte, error) {
-	return ioutil.ReadFile(filename)
+	return os.ReadFile(filename)
 }
 
 func (fs RealFileSystem) OpenFile(name string, flag int, perm os.FileMode) (io.ReadCloser, error) {
@@ -127,7 +135,7 @@ func (m *HIDRawManager) FindDevices() error {
 	}
 
 	if len(hidrawPaths) == 0 {
-		return fmt.Errorf("no GameBuds hidraw devices found")
+		return ErrNoGameBudsHIDRawDevices
 	}
 
 	// Note: On some systems (like Arch Linux), devices may need to be opened in read-write mode
@@ -164,7 +172,7 @@ func (m *HIDRawManager) FindDevices() error {
 	}
 
 	if len(m.devices) == 0 {
-		return fmt.Errorf("could not open any hidraw devices")
+		return ErrNoHIDRawDevicesOpened
 	}
 
 	log.Printf("Successfully opened %d HID interfaces", len(m.devices))
@@ -196,7 +204,7 @@ func (m *HIDRawManager) SetOnStateChange(callback func(protocol.DeviceState)) {
 
 func (m *HIDRawManager) Start() error {
 	if len(m.devices) == 0 {
-		return fmt.Errorf("no devices to monitor")
+		return ErrNoDevicesToMonitor
 	}
 
 	log.Printf("Monitoring %d HID interfaces...", len(m.devices))
@@ -257,7 +265,7 @@ func (m *HIDRawManager) Start() error {
 						data := make([]byte, n)
 						copy(data, buf[:n])
 						log.Printf("🎧 GameBuds: ✅ Received HID report #%d from device %d (%s): reportID=0x%02X, data=%x", readCount, info.number, info.path, data[0], data)
-						m.protocol.ParseReport(data)
+						m.parseReport(data)
 						lastLogTime = time.Now()
 					} else {
 						if time.Since(lastLogTime) > 30*time.Second {
@@ -271,6 +279,12 @@ func (m *HIDRawManager) Start() error {
 	}
 
 	return nil
+}
+
+func (m *HIDRawManager) parseReport(data []byte) {
+	if err := m.protocol.ParseReport(data); err != nil {
+		log.Printf("🎧 GameBuds: failed to parse HID report: %v", err)
+	}
 }
 
 func (m *HIDRawManager) GetState() protocol.DeviceState {
@@ -295,7 +309,7 @@ func (m *HIDRawManager) Stop() error {
 
 func (m *HIDRawManager) requestFeatureReport(fd *os.File, reportID byte) ([]byte, error) {
 	if fd == nil {
-		return nil, fmt.Errorf("file descriptor not available")
+		return nil, ErrFileDescriptorMissing
 	}
 
 	buf := make([]byte, 64)
@@ -310,7 +324,7 @@ func (m *HIDRawManager) requestFeatureReport(fd *os.File, reportID byte) ([]byte
 	)
 
 	if errno != 0 {
-		return nil, fmt.Errorf("ioctl failed: %v", errno)
+		return nil, fmt.Errorf("%w: %v", ErrHIDRawIOCTLFailed, errno)
 	}
 
 	return buf, nil
@@ -347,7 +361,7 @@ func (m *HIDRawManager) requestInitialFeatureReports() {
 					} else {
 						log.Printf("🎧 GameBuds: Received feature report 0x%02X: %x", reportID, data)
 						if len(data) > 0 && data[0] == reportID {
-							m.protocol.ParseReport(data)
+							m.parseReport(data)
 						}
 					}
 				}
@@ -403,7 +417,7 @@ func (m *HIDRawManager) startPollingGoroutine() {
 					}
 					if !allZeros {
 						log.Printf("🎧 GameBuds: Polled battery report: %x", data)
-						m.protocol.ParseReport(data)
+						m.parseReport(data)
 					}
 				}
 
@@ -419,7 +433,7 @@ func (m *HIDRawManager) startPollingGoroutine() {
 						}
 						if !allZeros {
 							log.Printf("🎧 GameBuds: Polled wear status report: %x", data)
-							m.protocol.ParseReport(data)
+							m.parseReport(data)
 						}
 					}
 
@@ -434,7 +448,7 @@ func (m *HIDRawManager) startPollingGoroutine() {
 						}
 						if !allZeros {
 							log.Printf("🎧 GameBuds: Polled ANC mode report: %x", data)
-							m.protocol.ParseReport(data)
+							m.parseReport(data)
 						}
 					}
 				}
@@ -444,9 +458,14 @@ func (m *HIDRawManager) startPollingGoroutine() {
 }
 
 func (m *HIDRawManager) Close() error {
-	m.Stop()
-	for _, devInfo := range m.devices {
-		devInfo.file.Close()
+	var errs []error
+	if err := m.Stop(); err != nil {
+		errs = append(errs, err)
 	}
-	return nil
+	for _, devInfo := range m.devices {
+		if err := devInfo.file.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close %s: %w", devInfo.path, err))
+		}
+	}
+	return errors.Join(errs...)
 }
