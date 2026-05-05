@@ -263,9 +263,9 @@ func (t *TrayManager) updateTrayIcon() {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	var gameBudsBattery int = -1
-	var mouseBattery int = -1
-	var hyperxBattery int = -1
+	gameBudsBattery := -1
+	mouseBattery := -1
+	hyperxBattery := -1
 	hyperxCharging := false
 	var tooltipParts []string
 	hasGameBuds := false

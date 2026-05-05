@@ -122,6 +122,8 @@ func TestHyperX_FindDevice_NotFound(t *testing.T) {
 	d := NewHyperXDeviceWithDeps(fs, openRealHIDTransport)
 	if err := d.FindDevice(); err == nil {
 		t.Fatal("expected error for missing HyperX device")
+	} else if !errors.Is(err, ErrHyperXNotFound) {
+		t.Fatalf("FindDevice error = %v, want ErrHyperXNotFound", err)
 	}
 }
 

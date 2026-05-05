@@ -1,10 +1,17 @@
 package system
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+)
+
+var (
+	ErrMemInfoMissingTotal = errors.New("meminfo missing MemTotal")
+	ErrStatCPULineTooShort = errors.New("stat cpu line too short")
+	ErrStatMissingCPU      = errors.New("stat missing aggregate cpu line")
 )
 
 type fileReader interface {
@@ -91,7 +98,7 @@ func parseMemInfo(data string) (usedBytes, totalBytes uint64, percent int, err e
 
 	total, ok := values["MemTotal"]
 	if !ok || total == 0 {
-		return 0, 0, 0, fmt.Errorf("meminfo missing MemTotal")
+		return 0, 0, 0, ErrMemInfoMissingTotal
 	}
 
 	available, ok := values["MemAvailable"]
@@ -117,7 +124,7 @@ func parseCPUTimes(data string) (cpuTimes, error) {
 			continue
 		}
 		if len(fields) < 5 {
-			return cpuTimes{}, fmt.Errorf("stat cpu line too short")
+			return cpuTimes{}, ErrStatCPULineTooShort
 		}
 
 		var values []uint64
@@ -141,7 +148,7 @@ func parseCPUTimes(data string) (cpuTimes, error) {
 		return cpuTimes{idle: idle, total: total}, nil
 	}
 
-	return cpuTimes{}, fmt.Errorf("stat missing aggregate cpu line")
+	return cpuTimes{}, ErrStatMissingCPU
 }
 
 func calculateCPUPercent(prev, current cpuTimes) (int, bool) {

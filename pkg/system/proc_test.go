@@ -1,6 +1,7 @@
 package system
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 )
@@ -51,8 +52,8 @@ Shmem:            10 kB
 
 func TestParseMemInfo_MissingTotal(t *testing.T) {
 	_, _, _, err := parseMemInfo("MemAvailable: 100 kB\n")
-	if err == nil {
-		t.Fatal("expected error for missing MemTotal")
+	if !errors.Is(err, ErrMemInfoMissingTotal) {
+		t.Fatalf("parseMemInfo error = %v, want ErrMemInfoMissingTotal", err)
 	}
 }
 

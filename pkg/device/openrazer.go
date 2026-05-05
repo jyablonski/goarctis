@@ -1,6 +1,7 @@
 package device
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os/exec"
@@ -19,6 +20,12 @@ const (
 	razerDeviceIface  = "razer.device"
 	razerPowerIface   = "razer.device.power"
 	pollInterval      = 5 * time.Second
+)
+
+var (
+	ErrRazerConnectionUnavailable = errors.New("razer D-Bus connection not available")
+	ErrRazerReconnectFailed       = errors.New("failed to reconnect to Razer device")
+	ErrOpenRazerDaemonUnavailable = errors.New("OpenRazer daemon not available")
 )
 
 type RazerDevice struct {
@@ -143,14 +150,19 @@ func (r *RazerDevice) Stop() error {
 }
 
 func (r *RazerDevice) Close() error {
-	r.Stop()
+	var errs []error
+	if err := r.Stop(); err != nil {
+		errs = append(errs, err)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.conn != nil {
-		r.conn.Close()
+		if err := r.conn.Close(); err != nil {
+			errs = append(errs, err)
+		}
 		r.conn = nil
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (r *RazerDevice) pollLoop() {
@@ -258,7 +270,7 @@ func (r *RazerDevice) reconnectWithRetry() error {
 
 		return nil
 	}
-	return fmt.Errorf("failed to reconnect after %d attempts", maxRetries)
+	return fmt.Errorf("%w after %d attempts", ErrRazerReconnectFailed, maxRetries)
 }
 
 func (r *RazerDevice) reconnect() error {
@@ -266,7 +278,9 @@ func (r *RazerDevice) reconnect() error {
 	defer r.mu.Unlock()
 
 	if r.conn != nil {
-		r.conn.Close()
+		if err := r.conn.Close(); err != nil {
+			log.Printf("Error closing stale Razer D-Bus connection: %v", err)
+		}
 		r.conn = nil
 	}
 
@@ -286,7 +300,7 @@ func (r *RazerDevice) verifyDevice() error {
 	r.mu.RUnlock()
 
 	if conn == nil {
-		return fmt.Errorf("connection not available")
+		return ErrRazerConnectionUnavailable
 	}
 
 	obj := conn.Object(razerService, devicePath)
@@ -331,7 +345,7 @@ func (r *RazerDevice) updateState() error {
 	r.mu.RUnlock()
 
 	if conn == nil {
-		return fmt.Errorf("D-Bus connection not available")
+		return ErrRazerConnectionUnavailable
 	}
 
 	obj := conn.Object(razerService, r.devicePath)
@@ -368,13 +382,17 @@ func DiscoverRazerDevices() ([]*RazerDevice, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to session D-Bus: %w", err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			log.Printf("Error closing Razer discovery D-Bus connection: %v", err)
+		}
+	}()
 
 	obj := conn.Object(razerService, razerManagerPath)
 	var devices []string
 	err = obj.Call(razerManagerIface+".getDevices", 0).Store(&devices)
 	if err != nil {
-		return nil, fmt.Errorf("OpenRazer daemon not available or error: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrOpenRazerDaemonUnavailable, err)
 	}
 
 	if len(devices) == 0 {

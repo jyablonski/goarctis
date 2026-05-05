@@ -1,11 +1,17 @@
 package device
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"sync"
 
 	"github.com/jyablonski/goarctis/pkg/protocol"
+)
+
+var (
+	ErrNoSupportedDevices = errors.New("no supported devices found")
+	ErrStartAllDevices    = errors.New("failed to start any devices")
 )
 
 type DeviceManager struct {
@@ -78,7 +84,7 @@ func (dm *DeviceManager) DiscoverDevices(cfg DiscoveryConfig) error {
 	}
 
 	if len(dm.devices) == 0 {
-		return fmt.Errorf("no supported devices found")
+		return ErrNoSupportedDevices
 	}
 
 	return nil
@@ -99,16 +105,16 @@ func (dm *DeviceManager) StartAll() error {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
 
-	var errors []error
+	var errs []error
 	for deviceID, device := range dm.devices {
 		if err := device.Start(); err != nil {
 			log.Printf("Failed to start device %s: %v", deviceID, err)
-			errors = append(errors, fmt.Errorf("device %s: %w", deviceID, err))
+			errs = append(errs, fmt.Errorf("device %s: %w", deviceID, err))
 		}
 	}
 
-	if len(errors) > 0 && len(errors) == len(dm.devices) {
-		return fmt.Errorf("failed to start any devices: %v", errors)
+	if len(errs) > 0 && len(errs) == len(dm.devices) {
+		return fmt.Errorf("%w: %w", ErrStartAllDevices, errors.Join(errs...))
 	}
 
 	return nil
@@ -119,7 +125,9 @@ func (dm *DeviceManager) StopAll() {
 	defer dm.mu.RUnlock()
 
 	for _, device := range dm.devices {
-		device.Stop()
+		if err := device.Stop(); err != nil {
+			log.Printf("Error stopping device: %v", err)
+		}
 	}
 }
 

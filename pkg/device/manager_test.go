@@ -1,6 +1,7 @@
 package device
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/jyablonski/goarctis/pkg/protocol"
@@ -132,6 +133,9 @@ func TestDiscoverDevices_AllDisabled(t *testing.T) {
 	err := dm.DiscoverDevices(cfg)
 	if err == nil {
 		t.Error("DiscoverDevices should return error when all device types are disabled")
+	}
+	if !errors.Is(err, ErrNoSupportedDevices) {
+		t.Errorf("DiscoverDevices error = %v, want ErrNoSupportedDevices", err)
 	}
 
 	if len(dm.devices) != 0 {

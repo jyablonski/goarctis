@@ -145,48 +145,6 @@ func TestRazerStartEmitsCurrentState(t *testing.T) {
 	}
 }
 
-type mockRazerDevice struct {
-	id        string
-	name      string
-	state     protocol.DeviceState
-	connected bool
-}
-
-func (m *mockRazerDevice) GetID() string {
-	return m.id
-}
-
-func (m *mockRazerDevice) GetName() string {
-	return m.name
-}
-
-func (m *mockRazerDevice) GetType() DeviceType {
-	return DeviceTypeRazerDeathAdder
-}
-
-func (m *mockRazerDevice) GetState() protocol.DeviceState {
-	return m.state
-}
-
-func (m *mockRazerDevice) IsConnected() bool {
-	return m.connected
-}
-
-func (m *mockRazerDevice) Start() error {
-	return nil
-}
-
-func (m *mockRazerDevice) Stop() error {
-	return nil
-}
-
-func (m *mockRazerDevice) Close() error {
-	return nil
-}
-
-func (m *mockRazerDevice) SetOnStateChange(callback func(protocol.DeviceState)) {
-}
-
 func TestDeviceType_String(t *testing.T) {
 	if DeviceTypeSteelSeriesGameBuds != "steelseries_gamebuds" {
 		t.Errorf("DeviceTypeSteelSeriesGameBuds = %q, want 'steelseries_gamebuds'", DeviceTypeSteelSeriesGameBuds)
