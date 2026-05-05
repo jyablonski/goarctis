@@ -6,22 +6,23 @@ A Linux system tray application for monitoring wireless peripheral battery level
 
 ## What It Does
 
-`goarctis` sits in your system tray and shows real-time battery status for SteelSeries GameBuds, HyperX Cloud Alpha Wireless headsets, and Razer devices, plus Docker container counts and host CPU/memory utilization. It uses HID for GameBuds and HyperX, OpenRazer's D-Bus API for Razer mice, and Linux procfs for system metrics.
+`goarctis` sits in the system tray and shows real-time battery status for configured wireless devices, plus Docker container counts and host CPU/memory utilization. It uses HID for GameBuds and HyperX, OpenRazer's D-Bus API for Razer mice, and Linux procfs for system metrics.
 
-<img width="423" height="485" alt="goarctis system tray" src="assets/tray-screenshot.png" />
+<img width="320" height="660" alt="goarctis system tray" src="assets/tray-screenshot.png" />
 
 ## Why
 
-Wireless peripherals don't expose battery levels in any standard Linux UI. Instead of checking dmesg, using device-specific GUIs, or polling D-Bus manually:
+Wireless peripherals don't expose battery levels in any standard Linux UI, and most hardware companies don't provide Linux software support.
 
 ```bash
 # Before
 sudo cat /dev/hidraw3 | xxd   # hope you picked the right device
 dbus-send --print-reply --dest=org.razer ... getBattery
+free -h && top
 
 # After
-goarctis                       # battery levels in the system tray
-goarctis --disable-gamebuds    # only monitor Razer + Docker
+goarctis                       # battery, Docker, CPU, and memory in the tray
+goarctis --disable-system      # hide CPU/memory if you only want devices + Docker
 ```
 
 ## Installation
@@ -73,14 +74,14 @@ sudo pacman -S libayatana-appindicator gtk3 pkgconf
 
 ## Usage
 
-| Flag | Description | Example |
-| --- | --- | --- |
-| `--version` | Print version and exit | `goarctis --version` |
-| `--self-update` | Update to the latest release and restart the service | `goarctis --self-update` |
-| `--disable-gamebuds` | Skip GameBuds monitoring | `goarctis --disable-gamebuds` |
-| `--disable-razer` | Skip Razer device monitoring | `goarctis --disable-razer` |
-| `--disable-hyperx` | Skip HyperX Cloud Alpha Wireless monitoring | `goarctis --disable-hyperx` |
-| `--disable-system` | Skip CPU and memory monitoring | `goarctis --disable-system` |
+| Flag                 | Description                                          | Example                       |
+| -------------------- | ---------------------------------------------------- | ----------------------------- |
+| `--version`          | Print version and exit                               | `goarctis --version`          |
+| `--self-update`      | Update to the latest release and restart the service | `goarctis --self-update`      |
+| `--disable-gamebuds` | Skip GameBuds monitoring                             | `goarctis --disable-gamebuds` |
+| `--disable-razer`    | Skip Razer device monitoring                         | `goarctis --disable-razer`    |
+| `--disable-hyperx`   | Skip HyperX Cloud Alpha Wireless monitoring          | `goarctis --disable-hyperx`   |
+| `--disable-system`   | Skip CPU and memory monitoring                       | `goarctis --disable-system`   |
 
 Disabled sections are completely hidden from the tray dropdown menu.
 
@@ -145,14 +146,6 @@ make clean          # Remove build artifacts
 make deps           # Download and tidy dependencies
 ```
 
-### Releases
-
-```bash
-make release VERSION=v0.2.0
-```
-
-This validates semver format, checks for a clean working directory and duplicate tags, then creates and pushes an annotated git tag. The CI pipeline builds the binary and creates a GitHub release automatically.
-
 ## Project Structure
 
 ```
@@ -183,12 +176,6 @@ This validates semver format, checks for a clean working directory and duplicate
 ├── scripts/                  # helper scripts (systemd update, etc.)
 └── Makefile
 ```
-
-## Documentation
-
-- **[Code Structure](docs/code_structure.md)**: Package organization and design principles
-- **[How It Works](docs/how_it_works.md)**: HID communication, protocol parsing, and system tray integration
-- **[CPU and Memory Plan](docs/cpu_memory_monitoring_plan.md)**: Design notes for host resource monitoring
 
 ## License
 

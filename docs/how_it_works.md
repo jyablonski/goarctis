@@ -46,7 +46,7 @@ The application reads Linux procfs directly for lightweight host resource monito
 
 The system tray UI (`pkg/ui/tray.go`) provides real-time visualization:
 
-1. **Icon Updates**: The tray icon title displays battery levels, Docker counts, memory, and CPU spikes using emojis and percentages (e.g., `🎧 85% 🖱️ 42% 🧠 32%`). The icon updates in real-time as monitored state changes.
+1. **Icon Updates**: The tray icon title displays battery levels, Docker counts, memory, and CPU spikes using emojis and percentages (e.g., `🎧 85% 🖱️ 42% 🧠 32%`, or `🔥 87%` during a CPU spike). The icon updates in real-time as monitored state changes.
 
 2. **Menu Structure**: Clicking the tray icon reveals a detailed menu:
 
