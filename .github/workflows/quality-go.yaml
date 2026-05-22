@@ -20,6 +20,9 @@ on:
       - ".github/workflows/quality-go.yaml"
       - ".golangci.*"
 
+env:
+  GO_VERSION: "1.26"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -38,7 +41,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
 
       - name: Install system dependencies

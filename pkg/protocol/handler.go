@@ -8,7 +8,7 @@ import (
 
 const (
 	DeviceTypeSteelSeriesGameBuds = "steelseries_gamebuds"
-	DeviceTypeRazerDeathAdder     = "razer_deathadder"
+	DeviceTypeRazer               = "razer_deathadder"
 	DeviceTypeHyperXCloudAlpha    = "hyperx_cloud_alpha_wireless"
 
 	ReportBattery    = 0xB7
@@ -78,6 +78,7 @@ type DeviceState struct {
 	ANCMode         *ANCMode      // ANC mode (GameBuds only)
 	IsConnected     bool
 	FirmwareVersion string
+	Warning         string
 }
 
 // For dual-battery devices, returns the lower of the two
@@ -111,6 +112,7 @@ func (s DeviceState) Equal(other DeviceState) bool {
 		s.DeviceType == other.DeviceType &&
 		s.IsConnected == other.IsConnected &&
 		s.FirmwareVersion == other.FirmwareVersion &&
+		s.Warning == other.Warning &&
 		pointerEqual(s.Battery, other.Battery) &&
 		pointerEqual(s.LeftBattery, other.LeftBattery) &&
 		pointerEqual(s.RightBattery, other.RightBattery) &&
@@ -147,9 +149,12 @@ func (s DeviceState) String() string {
 		}
 
 		return fmt.Sprintf("L:%s | R:%s | ANC:%s", leftStr, rightStr, ancStr)
-	case DeviceTypeRazerDeathAdder:
+	case DeviceTypeRazer:
 		batteryStr := "--"
 		chargingStr := ""
+		if s.Warning != "" {
+			return s.Warning
+		}
 		if s.Battery != nil {
 			batteryStr = fmt.Sprintf("%d%%", *s.Battery)
 		}
@@ -253,40 +258,25 @@ func (h *Handler) copyState() DeviceState {
 		DeviceType:      state.DeviceType,
 		IsConnected:     state.IsConnected,
 		FirmwareVersion: state.FirmwareVersion,
-	}
-	if state.Battery != nil {
-		b := *state.Battery
-		copy.Battery = &b
-	}
-	if state.LeftBattery != nil {
-		b := *state.LeftBattery
-		copy.LeftBattery = &b
-	}
-	if state.RightBattery != nil {
-		b := *state.RightBattery
-		copy.RightBattery = &b
-	}
-	if state.DockBattery != nil {
-		b := *state.DockBattery
-		copy.DockBattery = &b
-	}
-	if state.IsCharging != nil {
-		b := *state.IsCharging
-		copy.IsCharging = &b
-	}
-	if state.LeftStatus != nil {
-		s := *state.LeftStatus
-		copy.LeftStatus = &s
-	}
-	if state.RightStatus != nil {
-		s := *state.RightStatus
-		copy.RightStatus = &s
-	}
-	if state.ANCMode != nil {
-		m := *state.ANCMode
-		copy.ANCMode = &m
+		Warning:         state.Warning,
+		Battery:         clonePtr(state.Battery),
+		LeftBattery:     clonePtr(state.LeftBattery),
+		RightBattery:    clonePtr(state.RightBattery),
+		DockBattery:     clonePtr(state.DockBattery),
+		IsCharging:      clonePtr(state.IsCharging),
+		LeftStatus:      clonePtr(state.LeftStatus),
+		RightStatus:     clonePtr(state.RightStatus),
+		ANCMode:         clonePtr(state.ANCMode),
 	}
 	return copy
+}
+
+func clonePtr[T any](p *T) *T {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
 }
 
 func pointerEqual[T comparable](p1, p2 *T) bool {

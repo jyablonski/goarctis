@@ -43,7 +43,7 @@ func TestTrayManager_UpdateDeviceState_Multiple(t *testing.T) {
 	battery := 70
 	state2 := protocol.DeviceState{
 		DeviceID:    "razer-device",
-		DeviceType:  "razer_deathadder",
+		DeviceType:  protocol.DeviceTypeRazer,
 		Battery:     &battery,
 		IsConnected: true,
 	}

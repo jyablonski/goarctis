@@ -2,6 +2,7 @@ package device
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/jyablonski/goarctis/pkg/protocol"
@@ -60,6 +61,44 @@ func TestIsConnectionClosed(t *testing.T) {
 	}
 }
 
+func TestIsUnsupportedBatteryMethod(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "unknown method",
+			err:      errors.New("org.freedesktop.DBus.Error.UnknownMethod: no such method getBattery"),
+			expected: true,
+		},
+		{
+			name:     "no such interface",
+			err:      errors.New("No such interface 'razer.device.power'"),
+			expected: true,
+		},
+		{
+			name:     "driver failure",
+			err:      errors.New("failed to read battery from driver"),
+			expected: false,
+		},
+		{
+			name:     "nil",
+			err:      nil,
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isUnsupportedBatteryMethod(tt.err)
+			if result != tt.expected {
+				t.Errorf("isUnsupportedBatteryMethod() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestRazerSetStateComparesPointerValues(t *testing.T) {
 	initialBattery := 70
 	initialCharging := false
@@ -69,7 +108,7 @@ func TestRazerSetStateComparesPointerValues(t *testing.T) {
 		stopChan:     make(chan struct{}),
 		state: protocol.DeviceState{
 			DeviceID:    "razer-1",
-			DeviceType:  string(DeviceTypeRazerDeathAdder),
+			DeviceType:  string(DeviceTypeRazer),
 			Battery:     &initialBattery,
 			IsCharging:  &initialCharging,
 			IsConnected: true,
@@ -113,7 +152,7 @@ func TestRazerStartEmitsCurrentState(t *testing.T) {
 		stopChan:     make(chan struct{}),
 		state: protocol.DeviceState{
 			DeviceID:    "razer-1",
-			DeviceType:  string(DeviceTypeRazerDeathAdder),
+			DeviceType:  string(DeviceTypeRazer),
 			Battery:     &battery,
 			IsCharging:  &isCharging,
 			IsConnected: true,
@@ -145,12 +184,110 @@ func TestRazerStartEmitsCurrentState(t *testing.T) {
 	}
 }
 
+func TestRazerSetBatteryUnavailableKeepsDeviceConnected(t *testing.T) {
+	battery := 70
+	isCharging := false
+	r := &RazerDevice{
+		deviceSerial: "razer-1",
+		deviceName:   "Razer Test Device",
+		stopChan:     make(chan struct{}),
+		state: protocol.DeviceState{
+			DeviceID:    "razer-1",
+			DeviceType:  string(DeviceTypeRazer),
+			Battery:     &battery,
+			IsCharging:  &isCharging,
+			IsConnected: true,
+		},
+	}
+
+	var got protocol.DeviceState
+	r.SetOnStateChange(func(state protocol.DeviceState) {
+		got = state
+	})
+
+	r.setBatteryUnavailable()
+
+	if !got.IsConnected {
+		t.Fatal("battery unavailable state should keep the device connected")
+	}
+	if got.Battery != nil {
+		t.Fatalf("Battery = %v, want nil", got.Battery)
+	}
+	if got.IsCharging != nil {
+		t.Fatalf("IsCharging = %v, want nil", got.IsCharging)
+	}
+	if got.Warning != razerBatteryUnavailableWarning {
+		t.Fatalf("Warning = %q, want %q", got.Warning, razerBatteryUnavailableWarning)
+	}
+}
+
+func TestNewRazerWarningDevice(t *testing.T) {
+	device := newRazerWarningDevice("razer-hid-1", "Razer Test Mouse")
+
+	if device.GetID() != "razer-hid-1" {
+		t.Fatalf("GetID() = %q", device.GetID())
+	}
+	if device.GetName() != "Razer Test Mouse" {
+		t.Fatalf("GetName() = %q", device.GetName())
+	}
+	if err := device.Start(); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	state := device.GetState()
+	if !state.IsConnected {
+		t.Fatal("warning device should be connected")
+	}
+	if state.Warning != razerBatteryUnavailableWarning {
+		t.Fatalf("Warning = %q, want %q", state.Warning, razerBatteryUnavailableWarning)
+	}
+}
+
+func TestFindRazerHIDDevices(t *testing.T) {
+	fs := &MockFileSystem{
+		dirContents: map[string][]os.FileInfo{
+			razerHIDSysfsDir: {
+				MockFileInfo{name: "0003:00001532:000000AA.0001"},
+				MockFileInfo{name: "0003:00001532:000000AA.0002"},
+				MockFileInfo{name: "0003:00001038:0000230A.0002"},
+			},
+		},
+		files: map[string][]byte{
+			"/sys/bus/hid/devices/0003:00001532:000000AA.0001/uevent": []byte("HID_ID=0003:00001532:000000AA\nHID_NAME=Razer Test Mouse\nHID_UNIQ=ABC123\n"),
+			"/sys/bus/hid/devices/0003:00001532:000000AA.0002/uevent": []byte("HID_ID=0003:00001532:000000AA\nHID_NAME=Razer Test Mouse\nHID_UNIQ=ABC123\n"),
+			"/sys/bus/hid/devices/0003:00001038:0000230A.0002/uevent": []byte("HID_ID=0003:00001038:0000230A\n"),
+			"/sys/bus/hid/devices/0003:00001038:0000230A.0002/name":   []byte("SteelSeries Arctis GameBuds\n"),
+		},
+	}
+
+	devices, err := findRazerHIDDevices(fs)
+	if err != nil {
+		t.Fatalf("findRazerHIDDevices returned error: %v", err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("len(devices) = %d, want 1", len(devices))
+	}
+	if devices[0].Name != "Razer Test Mouse" {
+		t.Fatalf("Name = %q, want Razer Test Mouse", devices[0].Name)
+	}
+	if devices[0].ID != "razer-hid-ABC123" {
+		t.Fatalf("ID = %q, want razer-hid-ABC123", devices[0].ID)
+	}
+}
+
+func TestParseUeventValue(t *testing.T) {
+	data := []byte("HID_ID=0003:00001532:000000BF\nHID_NAME=Razer DeathAdder V4 Pro\n")
+	if got := parseUeventValue(data, "HID_NAME"); got != "Razer DeathAdder V4 Pro" {
+		t.Fatalf("parseUeventValue() = %q", got)
+	}
+}
+
 func TestDeviceType_String(t *testing.T) {
 	if DeviceTypeSteelSeriesGameBuds != "steelseries_gamebuds" {
 		t.Errorf("DeviceTypeSteelSeriesGameBuds = %q, want 'steelseries_gamebuds'", DeviceTypeSteelSeriesGameBuds)
 	}
-	if DeviceTypeRazerDeathAdder != "razer_deathadder" {
-		t.Errorf("DeviceTypeRazerDeathAdder = %q, want 'razer_deathadder'", DeviceTypeRazerDeathAdder)
+	if DeviceTypeRazer != "razer_deathadder" {
+		t.Errorf("DeviceTypeRazer = %q, want 'razer_deathadder'", DeviceTypeRazer)
 	}
 	if DeviceTypeHyperXCloudAlpha != "hyperx_cloud_alpha_wireless" {
 		t.Errorf("DeviceTypeHyperXCloudAlpha = %q, want 'hyperx_cloud_alpha_wireless'", DeviceTypeHyperXCloudAlpha)

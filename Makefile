@@ -9,7 +9,7 @@ LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION)
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/goarctis cmd/goarctis/main.go
 
-# Run tests (exclude cmd directories to avoid covdata tool error in Go 1.25)
+# Run tests (exclude cmd directories to avoid covdata tool error in Go 1.26)
 test:
 	gotestsum -- $$(go list ./... | grep -v '/cmd/') -cover
 

@@ -28,6 +28,8 @@ var (
 	ErrOpenRazerDaemonUnavailable = errors.New("OpenRazer daemon not available")
 )
 
+const razerBatteryUnavailableWarning = "Battery unavailable: OpenRazer driver is not reporting battery data"
+
 type RazerDevice struct {
 	conn         *dbus.Conn
 	devicePath   dbus.ObjectPath
@@ -37,6 +39,7 @@ type RazerDevice struct {
 	stopChan     chan struct{}
 	onChange     func(protocol.DeviceState)
 	mu           sync.RWMutex
+	warningOnly  bool
 }
 
 func NewRazerDevice(devicePath dbus.ObjectPath, deviceSerial string) (*RazerDevice, error) {
@@ -59,7 +62,7 @@ func NewRazerDevice(devicePath dbus.ObjectPath, deviceSerial string) (*RazerDevi
 		deviceName:   deviceName,
 		state: protocol.DeviceState{
 			DeviceID:    deviceSerial,
-			DeviceType:  string(DeviceTypeRazerDeathAdder),
+			DeviceType:  string(DeviceTypeRazer),
 			IsConnected: true,
 		},
 		stopChan: make(chan struct{}),
@@ -81,7 +84,7 @@ func (r *RazerDevice) GetName() string {
 }
 
 func (r *RazerDevice) GetType() DeviceType {
-	return DeviceTypeRazerDeathAdder
+	return DeviceTypeRazer
 }
 
 func (r *RazerDevice) GetState() protocol.DeviceState {
@@ -136,6 +139,9 @@ func (r *RazerDevice) setDisconnected() {
 func (r *RazerDevice) Start() error {
 	log.Printf("Starting Razer device monitoring for %s", r.deviceName)
 	r.emitCurrentState()
+	if r.warningOnly {
+		return nil
+	}
 	go r.pollLoop()
 	return nil
 }
@@ -243,6 +249,17 @@ func isConnectionClosed(err error) bool {
 		strings.Contains(errStr, "use of closed network connection")
 }
 
+func isUnsupportedBatteryMethod(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "unknownmethod") ||
+		strings.Contains(errStr, "unknown method") ||
+		strings.Contains(errStr, "no such interface") ||
+		strings.Contains(errStr, "does not exist")
+}
+
 func (r *RazerDevice) reconnectWithRetry() error {
 	maxRetries := 5
 	for i := 0; i < maxRetries; i++ {
@@ -307,7 +324,10 @@ func (r *RazerDevice) verifyDevice() error {
 	var battery float64
 	err := obj.Call(razerPowerIface+".getBattery", 0).Store(&battery)
 	if err != nil {
-		return fmt.Errorf("device not accessible: %w", err)
+		if isConnectionClosed(err) {
+			return fmt.Errorf("device not accessible: %w", err)
+		}
+		return nil
 	}
 	return nil
 }
@@ -353,7 +373,12 @@ func (r *RazerDevice) updateState() error {
 	var battery float64
 	err := obj.Call(razerPowerIface+".getBattery", 0).Store(&battery)
 	if err != nil {
-		return fmt.Errorf("failed to get battery: %w", err)
+		if isConnectionClosed(err) {
+			return fmt.Errorf("failed to get battery: %w", err)
+		}
+		r.setBatteryUnavailable()
+		log.Printf("Razer %s: battery unavailable: %v", r.deviceName, err)
+		return nil
 	}
 
 	var isCharging bool
@@ -371,15 +396,29 @@ func (r *RazerDevice) updateState() error {
 		state.Battery = &batteryInt
 		state.IsCharging = &isCharging
 		state.IsConnected = true
+		state.Warning = ""
 	})
 
 	log.Printf("🖱️ Razer %s: Battery %d%% (Charging: %v)", r.deviceName, batteryInt, isCharging)
 	return nil
 }
 
+func (r *RazerDevice) setBatteryUnavailable() {
+	r.setState(func(state *protocol.DeviceState) {
+		state.Battery = nil
+		state.IsCharging = nil
+		state.IsConnected = true
+		state.Warning = razerBatteryUnavailableWarning
+	})
+}
+
 func DiscoverRazerDevices() ([]*RazerDevice, error) {
 	conn, err := dbus.SessionBus()
 	if err != nil {
+		if warningDevices := discoverRazerWarningDevices(RealFileSystem{}); len(warningDevices) > 0 {
+			log.Printf("OpenRazer D-Bus unavailable; showing warning for %d Razer HID device(s): %v", len(warningDevices), err)
+			return warningDevices, nil
+		}
 		return nil, fmt.Errorf("failed to connect to session D-Bus: %w", err)
 	}
 	defer func() {
@@ -392,10 +431,18 @@ func DiscoverRazerDevices() ([]*RazerDevice, error) {
 	var devices []string
 	err = obj.Call(razerManagerIface+".getDevices", 0).Store(&devices)
 	if err != nil {
+		if warningDevices := discoverRazerWarningDevices(RealFileSystem{}); len(warningDevices) > 0 {
+			log.Printf("OpenRazer daemon unavailable; showing warning for %d Razer HID device(s): %v", len(warningDevices), err)
+			return warningDevices, nil
+		}
 		return nil, fmt.Errorf("%w: %w", ErrOpenRazerDaemonUnavailable, err)
 	}
 
 	if len(devices) == 0 {
+		if warningDevices := discoverRazerWarningDevices(RealFileSystem{}); len(warningDevices) > 0 {
+			log.Printf("OpenRazer returned no devices; showing warning for %d Razer HID device(s)", len(warningDevices))
+			return warningDevices, nil
+		}
 		return []*RazerDevice{}, nil
 	}
 
@@ -407,8 +454,15 @@ func DiscoverRazerDevices() ([]*RazerDevice, error) {
 		var battery float64
 		err := deviceObj.Call(razerPowerIface+".getBattery", 0).Store(&battery)
 		if err != nil {
-			log.Printf("Device %s doesn't support battery monitoring: %v", deviceSerial, err)
-			continue
+			if isConnectionClosed(err) {
+				log.Printf("Device %s not accessible during Razer discovery: %v", deviceSerial, err)
+				continue
+			}
+			if isUnsupportedBatteryMethod(err) {
+				log.Printf("Device %s doesn't support battery monitoring: %v", deviceSerial, err)
+				continue
+			}
+			log.Printf("Device %s reports no battery data; showing tray warning: %v", deviceSerial, err)
 		}
 
 		device, err := NewRazerDevice(devicePath, deviceSerial)

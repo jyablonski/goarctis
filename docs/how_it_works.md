@@ -1,73 +1,60 @@
-## How it Works
+## How goarctis Works
 
-goarctis uses different methods to communicate with HID devices depending on the device type:
+goarctis is a Linux system tray app that combines hardware battery monitors, Docker container status, and host CPU/memory metrics into one AppIndicator menu and compact tray label.
 
-### SteelSeries Arctis GameBuds - HID Raw Interface
+### Polling Summary
 
-The application communicates directly with GameBuds through Linux's HID raw (`/dev/hidraw*`) interface:
+| Source                      | What is checked                                                                                             | Interval                                                                                                                 | Tray impact                                              |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| SteelSeries GameBuds        | Battery, wear state, and ANC reports from hidraw feature/input reports                                      | Event-driven blocking reads, plus active feature-report polling every 5 seconds when a writable hidraw node is available | Device section, compact battery title, and tooltip       |
+| HyperX Cloud Alpha Wireless | Online, charging, and battery HID request/response rounds                                                   | Immediately on start, then every 5 seconds                                                                               | Device section, compact battery title, and tooltip       |
+| Razer via OpenRazer         | `getBattery()` and `isCharging()` over the OpenRazer session D-Bus API                                      | Every 5 seconds while OpenRazer is available                                                                             | Device section, compact battery title, and tooltip       |
+| Razer HID fallback          | `/sys/bus/hid/devices` scan for Razer vendor ID when OpenRazer is unavailable or not reporting battery data | Discovery-time fallback only; no recurring battery poll                                                                  | Warning-only device section in the popup                 |
+| Docker                      | `docker ps --format "{{.ID}}\t{{.Names}}"`                                                                  | Immediately on start, then every 10 seconds                                                                              | Docker section, compact running-count title, and tooltip |
+| System                      | CPU from `/proc/stat` and memory from `/proc/meminfo`                                                       | Immediately on start, then every 2 seconds unless `--disable-system` is set                                              | System section, compact CPU/memory title, and tooltip    |
 
-1. **Device Discovery**: On startup, the application scans `/sys/class/hidraw` to find devices matching the GameBuds vendor/product IDs (1038:230a). It reads device information from sysfs to identify the correct HID interfaces.
+### End-to-End Flow
 
-2. **Raw HID Reading**: Once identified, the application opens the hidraw device files (`/dev/hidraw*`) and continuously reads binary HID reports in separate goroutines. These reports contain battery levels, wear status, ANC mode, and other device state information.
+1. `cmd/goarctis/main.go` parses CLI flags (`--version`, `--self-update`, `--disable-gamebuds`, `--disable-razer`, `--disable-hyperx`, `--disable-system`). `--version` prints `pkg/version.Version` (injected by the Makefile via `-ldflags`, defaulting to `dev`) and exits. `--self-update` runs `pkg/selfupdate`, which checks the latest GitHub release, downloads the matching `goarctis-GOOS-GOARCH` asset, replaces the binary, and attempts `systemctl --user restart goarctis.service`.
 
-3. **Protocol Parsing**: The raw HID data is parsed by a protocol handler (`pkg/protocol/handler.go`) that understands different report types:
+2. The normal path installs SIGINT/SIGTERM handling and enters `systray.Run(onReady, onExit)`. `onReady` creates a `ui.TrayManager`, sets the static embedded Arc logo from `assets/png/goarctis-tray-48.png` as the tray icon, and initializes the menu with an empty title, a disabled status row, hidden device sections, optional system rows, Docker rows, and a Quit action. The tray icon never changes with battery state.
 
-   - **Report 0xB7**: Battery levels for left and right earbuds
-   - **Report 0xB5**: Wear status (In Case/Out/Wearing) for each earbud
-   - **Report 0xBD**: Active Noise Cancellation mode (Off/Transparency/Active)
-   - **Report 0xC6**: In-ear detection events
+3. `onReady` then creates a `device.DeviceManager`, registers a single state-change callback, and starts device discovery in a goroutine so the tray event loop stays responsive. Each enabled device class discovers independently; a missing device logs but does not block other classes.
 
-4. **State Management**: As reports are parsed, the device state is updated and callbacks are triggered to notify the UI layer of changes.
+4. SteelSeries GameBuds (`1038:230a`) are found by scanning `/sys/class/hidraw` via the shared `findHIDRawDevices` helper. Nodes are opened read-write first, then read-only as a fallback, because feature reports require a writable fd on some systems. Monitoring requests initial battery/wear/ANC reports, starts one blocking read goroutine per hidraw node (GameBuds are largely event-driven, so reads may block until the user removes an earbud, places it in the case, or changes ANC), and runs a 5-second polling goroutine on the first writable node. `pkg/protocol/handler.go` parses reports into a shared `protocol.DeviceState` and uses `DeviceState.Equal` to suppress spurious change notifications.
 
-### Razer Devices - D-Bus via OpenRazer
+5. HyperX Cloud Alpha Wireless (`03f0:098d`) uses raw non-blocking syscalls on its hidraw node for predictable polling. Polling runs immediately and every 5 seconds, draining stale reports and then running a three-round request/response (`0x03` online, `0x0c` charging, `0x0b` battery). Responses must match the `0x21 0xbb <subcommand>` header or they are retried. If the dongle is present but the headset is off or out of range, state is marked disconnected so the section hides; if charging without a percentage, the menu shows charging instead of a stale number.
 
-For Razer devices, the application uses D-Bus to communicate with the OpenRazer Linux driver:
+6. Razer devices come from the session D-Bus `org.razer` OpenRazer daemon, polled every 5 seconds via `razer.device.power.getBattery()` and `razer.device.power.isCharging()`. `isCharging` errors are treated as wireless/not charging; battery errors split into reconnection (closed D-Bus) versus warning-state (other failures). Connection failures back off and eventually try `systemctl --user restart openrazer-daemon.service`, falling back to `openrazer-daemon`. When OpenRazer is unavailable, goarctis scans `/sys/bus/hid/devices` for vendor ID `1532`, deduplicates by `HID_UNIQ` or `HID_ID`, and shows those as warning-only devices that do not poll D-Bus and do not contribute to the compact tray title.
 
-1. **Device Discovery**: The application connects to the session D-Bus and queries the OpenRazer daemon (`org.razer` service) to enumerate all connected Razer devices. It then tests each device to determine if it supports battery reporting.
+7. DeviceManager stores all discovered devices behind the `BatteryDevice` interface and routes each device callback back to `cmd/goarctis` as `(deviceID, DeviceState)`, which forwards to `TrayManager.UpdateDeviceState`. The tray stores the latest state per device ID, updates the relevant section, and rebuilds the compact title and tooltip.
 
-2. **Polling Mechanism**: Unlike GameBuds which push data via HID reports, Razer devices are polled every 5 seconds. The application calls D-Bus methods:
+8. Section visibility favors hiding stale or misleading UI over showing placeholders. GameBuds sections stay hidden until real earbud data arrives (a dongle alone is not enough). HyperX and Razer sections hide when `DeviceState.IsConnected` is false. Normal Razer sections show battery and charging/wireless mode; Razer warning states hide those rows and show only the warning row.
 
-   - `razer.device.power.getBattery()` - Retrieves battery percentage
-   - `razer.device.power.isCharging()` - Determines if device is charging or in wireless mode
+9. The compact tray title is intentionally terse and can include device battery percentages, Docker running count, CPU spike percent, and memory percent. Unknown values are skipped so disconnected, unsupported, or warning-only devices do not add `--` noise. The tooltip carries more detail: formatted device state strings, Docker running count, and system CPU/memory summaries.
 
-3. **Reconnection Handling**: The application includes robust error handling for mode switches (wired ↔ wireless). When connection errors are detected, it automatically attempts to reconnect with exponential backoff and can even restart the OpenRazer daemon if needed.
+10. The Docker monitor runs regardless of device discovery, polling every 10 seconds with `docker ps --format "{{.ID}}\t{{.Names}}"`. State stores only availability and running container IDs/names; the tray shows unavailable, no containers, or a running count plus up to three names. The "Stop All Containers" row appears only when containers are running and calls `docker ps -q` then `docker stop <ids...>` through the `CommandRunner` abstraction.
 
-### Host CPU and Memory - Linux procfs
+11. The system monitor runs unless `--disable-system` is set, polling every 2 seconds via `pkg/system`. Memory comes from `/proc/meminfo` as `MemTotal - MemAvailable`, with a fallback for older kernels using free/buffers/cache/reclaimable slab/shared. CPU comes from the aggregate `cpu` line in `/proc/stat` and is available after the second sample (cumulative counters). A 60-second peak window is kept, and samples at or above 80 percent start a 10-second spike hold. Notifications are thresholded: CPU and CPU peak must move at least 5 points, memory at least 1 point, or availability/spike/total-memory state must change.
 
-The application reads Linux procfs directly for lightweight host resource monitoring:
+12. Quit clicks arrive on `TrayManager.QuitChannel` and trigger `systray.Quit()`, which runs `onExit`. Both signal handling and `onExit` call `cleanup()`, which stops Docker and system monitors, closes all devices, and releases device resources (hidraw fds, D-Bus connections). Formatting and state-selection helpers are kept separate from AppIndicator calls so tests can exercise menu logic without initializing systray, and hardware paths use injected filesystems, transports, and command runners.
 
-1. **Memory Utilization**: The system monitor reads `/proc/meminfo` and computes used memory from `MemTotal - MemAvailable`. On older kernels without `MemAvailable`, it falls back to the usual free/buffer/cache fields.
+### Package Responsibilities
 
-2. **CPU Utilization**: The system monitor reads the aggregate `cpu` line from `/proc/stat`. Because those values are cumulative counters, CPU utilization is calculated from the difference between two samples.
+1. `cmd/goarctis` owns flags, startup wiring, monitor lifecycles, Docker stop-all handling, quit handling, and cleanup.
 
-3. **Spike Detection**: CPU samples are kept in a short rolling window. The tray can show a recent peak and hold a spike indicator briefly so short CPU bursts are visible long enough to notice.
+2. `assets` embeds the tray PNG used by `systray.SetIcon`.
 
-### System Tray Display
+3. `pkg/device` owns hardware discovery, device lifecycles, hidraw integration, OpenRazer D-Bus integration, and Razer HID fallback warning detection.
 
-The system tray UI (`pkg/ui/tray.go`) provides real-time visualization:
+4. `pkg/protocol` owns the shared `DeviceState` model and GameBuds HID report parsing.
 
-1. **Icon Updates**: The tray icon title displays battery levels, Docker counts, memory, and CPU spikes using emojis and percentages (e.g., `🎧 85% 🖱️ 42% 🧠 32%`, or `🔥 87%` during a CPU spike). The icon updates in real-time as monitored state changes.
+5. `pkg/docker` owns Docker CLI polling and the stop-all action. Command execution is behind `CommandRunner` for tests.
 
-2. **Menu Structure**: Clicking the tray icon reveals a detailed menu:
+6. `pkg/system` owns Linux procfs sampling, CPU/memory state, peak/spike decoration, and notification thresholds.
 
-   - Device-specific sections for each connected device
-   - Battery levels for individual earbuds (GameBuds)
-   - Charging/wireless mode indicators
-   - ANC mode display (GameBuds)
-   - CPU, CPU peak, and memory utilization
-   - Docker container count and stop-all action
+7. `pkg/ui` owns AppIndicator menu construction, section visibility rules, title/tooltip formatting, and user action channels.
 
-3. **State Synchronization**: The `DeviceManager` (`pkg/device/manager.go`) coordinates multiple devices and routes state change callbacks to the UI. Docker and system monitors follow the same callback pattern with their own state types. When monitored state changes, the tray icon and menu items are updated accordingly.
+8. `pkg/selfupdate` owns GitHub release lookup, version comparison, binary replacement, and systemd user-service restart.
 
-### Architecture Overview
-
-The application follows a modular design with clear separation of concerns:
-
-- **Device Layer** (`pkg/device/`): Abstracts device-specific communication (HID raw for GameBuds, D-Bus for Razer)
-- **Protocol Layer** (`pkg/protocol/`): Parses device-specific data formats into a unified `DeviceState` structure
-- **System Layer** (`pkg/system/`): Reads Linux procfs and turns CPU/memory counters into tray-ready state
-- **Docker Layer** (`pkg/docker/`): Polls Docker container status through the Docker CLI
-- **UI Layer** (`pkg/ui/`): Handles system tray rendering and user interaction
-- **Manager Layer**: Coordinates device discovery, monitoring, and state propagation
-
-All device, Docker, and system monitoring happens in background goroutines, ensuring the UI remains responsive. The main goroutine runs the system tray event loop, while monitoring runs concurrently.
+9. `pkg/version` owns the build-time version variable injected by the Makefile.

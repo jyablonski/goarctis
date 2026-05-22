@@ -6,6 +6,13 @@ This document describes the organization of the goarctis project.
 
 ```
 goarctis/
+├── assets/                   # Static and embedded visual assets
+│   ├── assets.go             # Embeds tray icon bytes for systray
+│   ├── goarctis.svg          # README/project logo
+│   ├── tray-screenshot.png   # README screenshot
+│   └── png/
+│       └── goarctis-tray-48.png
+│
 ├── cmd/                      # Application entry points
 │   ├── goarctis/
 │   │   └── main.go          # Main application
@@ -18,7 +25,8 @@ goarctis/
 │   │   ├── manager.go       # Multi-device coordination
 │   │   ├── hidraw.go        # SteelSeries GameBuds implementation
 │   │   ├── hyperx.go        # HyperX Cloud Alpha Wireless implementation
-│   │   ├── openrazer.go     # Razer devices implementation
+│   │   ├── openrazer.go     # Razer devices implementation and HID warning fallback
+│   │   ├── razer_hid_fallback.go # Razer sysfs HID warning fallback
 │   │   └── *_test.go        # Test files
 │   │
 │   ├── docker/              # Docker container monitoring
@@ -47,7 +55,6 @@ goarctis/
 │
 ├── docs/                     # Documentation
 │   ├── code_structure.md    # This file
-│   ├── cpu_memory_monitoring_plan.md
 │   └── how_it_works.md
 │
 ├── scripts/                  # Utility scripts
@@ -56,7 +63,6 @@ goarctis/
 ├── bin/                      # Build artifacts (gitignored)
 │
 ├── README.md                 # Project overview and quick start
-├── CHANGELOG.md             # Version history
 ├── LICENSE                   # License file
 ├── Makefile                  # Build automation
 ├── go.mod                    # Go module definition
@@ -71,6 +77,12 @@ goarctis/
 - **goarctis/**: Main application that coordinates all components
 - **test-razer/**: Standalone utility for testing Razer device discovery
 
+### `assets/` - Visual Assets
+
+- **assets.go**: Embeds the tray PNG used by `systray.SetIcon`
+- **goarctis.svg**: Source logo used by the README
+- **png/goarctis-tray-48.png**: Tray-specific PNG with tight padding for AppIndicator panels
+
 ### `pkg/device/` - Device Abstraction
 
 - **interface.go**: Defines the `BatteryDevice` interface that all device implementations must satisfy
@@ -78,6 +90,7 @@ goarctis/
 - **hidraw.go**: SteelSeries GameBuds implementation using HID raw device access
 - **hyperx.go**: HyperX Cloud Alpha Wireless implementation using hidraw request/response polling
 - **openrazer.go**: Razer devices implementation using OpenRazer D-Bus
+- **razer_hid_fallback.go**: Sysfs HID fallback warning detection when OpenRazer stops reporting battery data
 
 ### `pkg/docker/` - Docker Monitoring
 
