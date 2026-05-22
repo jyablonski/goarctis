@@ -6,7 +6,7 @@ type DeviceType string
 
 const (
 	DeviceTypeSteelSeriesGameBuds DeviceType = protocol.DeviceTypeSteelSeriesGameBuds
-	DeviceTypeRazerDeathAdder     DeviceType = protocol.DeviceTypeRazerDeathAdder
+	DeviceTypeRazer               DeviceType = protocol.DeviceTypeRazer
 	DeviceTypeHyperXCloudAlpha    DeviceType = protocol.DeviceTypeHyperXCloudAlpha
 )
 

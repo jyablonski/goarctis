@@ -2,28 +2,25 @@
 
 ![CI CD Pipeline](https://github.com/jyablonski/goarctis/actions/workflows/ci_cd.yaml/badge.svg)
 
+<p align="center">
+  <img width="128" height="128" alt="goarctis logo" src="assets/goarctis.svg" />
+</p>
+
 A Linux system tray application for monitoring wireless peripheral battery levels, Docker containers, and host CPU/memory utilization.
 
 ## What It Does
 
-`goarctis` sits in the system tray and shows real-time battery status for configured wireless devices, plus Docker container counts and host CPU/memory utilization. It uses HID for GameBuds and HyperX, OpenRazer's D-Bus API for Razer mice, and Linux procfs for system metrics.
+`goarctis` sits in the system tray and shows wireless peripheral battery state, Docker container counts, and host CPU/memory utilization.
+
+Supported sources:
+
+- SteelSeries Arctis GameBuds over hidraw
+- HyperX Cloud Alpha Wireless over hidraw
+- Razer wireless devices through OpenRazer, with a tray warning when OpenRazer stops reporting battery data
+- Docker containers through the Docker CLI
+- CPU and memory through Linux procfs
 
 <img width="320" height="660" alt="goarctis system tray" src="assets/tray-screenshot.png" />
-
-## Why
-
-Wireless peripherals don't expose battery levels in any standard Linux UI, and most hardware companies don't provide Linux software support.
-
-```bash
-# Before
-sudo cat /dev/hidraw3 | xxd   # hope you picked the right device
-dbus-send --print-reply --dest=org.razer ... getBattery
-free -h && top
-
-# After
-goarctis                       # battery, Docker, CPU, and memory in the tray
-goarctis --disable-system      # hide CPU/memory if you only want devices + Docker
-```
 
 ## Installation
 
@@ -65,10 +62,10 @@ sudo pacman -S libayatana-appindicator gtk3 pkgconf
 
 ### Runtime Requirements
 
-- Linux with PulseAudio/PipeWire
+- Linux desktop environment with AppIndicator support
 - **GameBuds:** SteelSeries Arctis GameBuds connected via USB dongle
 - **HyperX Cloud Alpha Wireless:** connected via its 2.4 GHz USB dongle. The hidraw node is owned by `root:plugdev` — the user running goarctis must be in the `plugdev` group (`sudo usermod -aG plugdev $USER`, then log out and back in).
-- **Razer devices:** [OpenRazer](https://openrazer.github.io/) daemon installed and running
+- **Razer devices:** [OpenRazer](https://openrazer.github.io/) daemon installed and running for battery percentages. If a Razer HID device is present but OpenRazer is unavailable or not reporting battery data, goarctis shows a tray warning instead.
 - **Docker monitoring:** Docker CLI available in `PATH`
 - **CPU/memory monitoring:** Linux `/proc` mounted normally
 
@@ -112,15 +109,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now goarctis.service
 ```
 
-To update, stop the service, replace the binary, and restart:
-
-```bash
-systemctl --user stop goarctis.service
-# install new binary ...
-systemctl --user start goarctis.service
-```
-
-Or use the provided script: `./scripts/update_systemd.sh`
+To update a systemd install manually, stop the service, replace the binary, and start it again. The helper script `./scripts/update_systemd.sh` handles that flow.
 
 ## Updating
 
@@ -146,36 +135,10 @@ make clean          # Remove build artifacts
 make deps           # Download and tidy dependencies
 ```
 
-## Project Structure
+## Documentation
 
-```
-├── cmd/
-│   └── goarctis/
-│       └── main.go           # entry point, flag parsing, wiring
-├── pkg/
-│   ├── device/
-│   │   ├── manager.go        # device discovery and lifecycle management
-│   │   ├── hidraw.go         # SteelSeries HID driver (raw USB)
-│   │   ├── hyperx.go         # HyperX Cloud Alpha Wireless HID driver
-│   │   ├── openrazer.go      # Razer driver (D-Bus via OpenRazer)
-│   │   └── interface.go      # BatteryDevice interface
-│   ├── docker/
-│   │   └── monitor.go        # Docker container monitoring (polls docker ps)
-│   ├── system/
-│   │   ├── monitor.go        # host CPU/memory monitoring
-│   │   └── proc.go           # Linux /proc parsing
-│   ├── protocol/
-│   │   └── handler.go        # HID protocol parser, DeviceState struct
-│   ├── selfupdate/
-│   │   └── selfupdate.go     # self-update via GitHub releases
-│   ├── ui/
-│   │   └── tray.go           # system tray menu, state display
-│   └── version/
-│       └── version.go        # build-time version injection
-├── docs/                     # additional documentation
-├── scripts/                  # helper scripts (systemd update, etc.)
-└── Makefile
-```
+- [How goarctis works](docs/how_it_works.md)
+- [Project structure](docs/code_structure.md)
 
 ## License
 

@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/getlantern/systray"
+	"github.com/jyablonski/goarctis/assets"
 	"github.com/jyablonski/goarctis/pkg/docker"
 	"github.com/jyablonski/goarctis/pkg/protocol"
 	"github.com/jyablonski/goarctis/pkg/system"
@@ -31,6 +32,7 @@ type TrayManager struct {
 	razerMenu     *systray.MenuItem
 	razerBattery  *systray.MenuItem
 	razerCharging *systray.MenuItem
+	razerWarning  *systray.MenuItem
 
 	hyperxMenu    *systray.MenuItem
 	hyperxBattery *systray.MenuItem
@@ -61,8 +63,9 @@ func NewTrayManager() *TrayManager {
 func (t *TrayManager) Initialize(cfg TrayConfig) {
 	t.config = cfg
 
-	systray.SetTitle("🎧")
-	systray.SetTooltip(fmt.Sprintf("Battery Monitor (v%s)", version.Version))
+	systray.SetIcon(assets.TrayIconPNG)
+	systray.SetTitle("")
+	systray.SetTooltip("goarctis")
 
 	t.mStatus = systray.AddMenuItem("Initializing...", "Connection status")
 	t.mStatus.Disable()
@@ -82,6 +85,7 @@ func (t *TrayManager) Initialize(cfg TrayConfig) {
 		t.razerMenu = addDisabledHiddenMenuItem("🖱️ Razer Device", "Razer Device")
 		t.razerBattery = addDisabledHiddenMenuItem("  Battery: --", "Battery level")
 		t.razerCharging = addDisabledHiddenMenuItem("  Charging: --", "Charging status")
+		t.razerWarning = addDisabledHiddenMenuItem("  Battery unavailable", "Razer battery warning")
 	}
 
 	// HyperX section (only added if not disabled). Hidden at startup until the
@@ -131,7 +135,7 @@ func (t *TrayManager) UpdateDeviceState(deviceID string, state protocol.DeviceSt
 	switch state.DeviceType {
 	case protocol.DeviceTypeSteelSeriesGameBuds:
 		t.updateGameBuds(state)
-	case protocol.DeviceTypeRazerDeathAdder:
+	case protocol.DeviceTypeRazer:
 		t.updateRazer(state)
 	case protocol.DeviceTypeHyperXCloudAlpha:
 		t.updateHyperX(state)
@@ -152,7 +156,7 @@ func (t *TrayManager) gameBudsItems() []*systray.MenuItem {
 }
 
 func (t *TrayManager) razerItems() []*systray.MenuItem {
-	return []*systray.MenuItem{t.razerMenu, t.razerBattery, t.razerCharging}
+	return []*systray.MenuItem{t.razerMenu, t.razerBattery, t.razerCharging, t.razerWarning}
 }
 
 func (t *TrayManager) hyperxItems() []*systray.MenuItem {
@@ -227,7 +231,18 @@ func (t *TrayManager) updateRazer(state protocol.DeviceState) {
 	t.razerMenu.SetTitle("🖱️ Razer Device")
 	t.razerMenu.Enable()
 
+	if state.Warning != "" {
+		t.razerBattery.Hide()
+		t.razerCharging.Hide()
+		t.razerWarning.SetTitle("  ⚠️ " + state.Warning)
+		t.razerWarning.Show()
+		t.razerWarning.Enable()
+		return
+	}
+
+	t.razerWarning.Hide()
 	t.razerBattery.SetTitle(formatBatteryMenuTitle(state.Battery))
+	t.razerBattery.Show()
 	t.razerBattery.Enable()
 
 	chargingText := "  Mode: --"
@@ -239,6 +254,7 @@ func (t *TrayManager) updateRazer(state protocol.DeviceState) {
 		}
 	}
 	t.razerCharging.SetTitle(chargingText)
+	t.razerCharging.Show()
 	t.razerCharging.Enable()
 }
 
@@ -263,92 +279,121 @@ func (t *TrayManager) updateTrayIcon() {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	gameBudsBattery := -1
-	mouseBattery := -1
-	hyperxBattery := -1
-	hyperxCharging := false
-	var tooltipParts []string
-	hasGameBuds := false
-	hasMouse := false
-	hasHyperX := false
+	titleParts := buildTrayTitleParts(t.devices, t.dockerState, t.systemState)
+	tooltipParts := buildTrayTooltipParts(t.devices, t.dockerState, t.systemState)
 
-	for _, state := range t.devices {
-		switch state.DeviceType {
-		case protocol.DeviceTypeSteelSeriesGameBuds:
-			if !isVisibleGameBudsState(state) {
-				continue
-			}
-			hasGameBuds = true
-			gameBudsBattery = gameBudsTrayBattery(state)
-			tooltipParts = append(tooltipParts, fmt.Sprintf("GameBuds: %s", state.String()))
-		case protocol.DeviceTypeRazerDeathAdder:
-			if !state.IsConnected {
-				continue
-			}
-			hasMouse = true
-			if state.Battery != nil {
-				mouseBattery = *state.Battery
-			}
-			tooltipParts = append(tooltipParts, fmt.Sprintf("Razer: %s", state.String()))
-		case protocol.DeviceTypeHyperXCloudAlpha:
-			if !state.IsConnected {
-				continue
-			}
-			hasHyperX = true
-			if state.IsCharging != nil && *state.IsCharging {
-				hyperxCharging = true
-			}
-			if state.Battery != nil {
-				hyperxBattery = *state.Battery
-			}
-			tooltipParts = append(tooltipParts, fmt.Sprintf("HyperX: %s", state.String()))
-		}
-	}
-
-	var titleParts []string
-
-	if hasGameBuds {
-		titleParts = append(titleParts, formatTrayBattery("🎧", gameBudsBattery, false))
-	}
-
-	if hasHyperX {
-		titleParts = append(titleParts, formatTrayBattery("🎧", hyperxBattery, hyperxCharging))
-	}
-
-	if hasMouse {
-		titleParts = append(titleParts, formatTrayBattery("🖱️", mouseBattery, false))
-	}
-
-	dockerCount := t.dockerState.RunningCount()
-	if dockerCount > 0 {
-		titleParts = append(titleParts, fmt.Sprintf("🐳 %d", dockerCount))
-		tooltipParts = append(tooltipParts, fmt.Sprintf("Docker: %d container(s)", dockerCount))
-	}
-
-	if t.systemState.Available {
-		if t.systemState.CPUSpiking && t.systemState.CPUPercent != nil {
-			titleParts = append(titleParts, formatSystemCPUTitle(*t.systemState.CPUPercent))
-		}
-		if t.systemState.MemoryPercent != nil {
-			titleParts = append(titleParts, formatSystemMemoryTitle(*t.systemState.MemoryPercent))
-		}
-		if tooltip := formatSystemTooltip(t.systemState); tooltip != "" {
-			tooltipParts = append(tooltipParts, tooltip)
-		}
-	}
-
-	if len(titleParts) == 0 {
-		systray.SetTitle("🎧")
+	systray.SetTitle(strings.Join(titleParts, " "))
+	if len(tooltipParts) == 0 {
 		systray.SetTooltip(fmt.Sprintf("No devices connected (v%s)", version.Version))
 	} else {
-		title := strings.Join(titleParts, " ")
-		log.Printf("Setting tray title: %s", title)
-		systray.SetTitle(title)
-
 		tooltip := strings.Join(tooltipParts, " | ")
 		tooltip += fmt.Sprintf(" (v%s)", version.Version)
 		systray.SetTooltip(tooltip)
 	}
+}
+
+func buildTrayTitleParts(devices map[string]protocol.DeviceState, dockerState docker.DockerState, systemState system.State) []string {
+	var parts []string
+	for _, deviceType := range []string{
+		protocol.DeviceTypeSteelSeriesGameBuds,
+		protocol.DeviceTypeHyperXCloudAlpha,
+		protocol.DeviceTypeRazer,
+	} {
+		if title := deviceTrayTitleForType(devices, deviceType); title != "" {
+			parts = append(parts, title)
+		}
+	}
+
+	if count := dockerState.RunningCount(); count > 0 {
+		parts = append(parts, fmt.Sprintf("🐳%d", count))
+	}
+
+	if systemState.Available {
+		if systemState.CPUSpiking && systemState.CPUPercent != nil {
+			parts = append(parts, formatSystemCPUTitle(*systemState.CPUPercent))
+		}
+		if systemState.MemoryPercent != nil {
+			parts = append(parts, formatSystemMemoryTitle(*systemState.MemoryPercent))
+		}
+	}
+	return parts
+}
+
+func deviceTrayTitleForType(devices map[string]protocol.DeviceState, deviceType string) string {
+	for _, state := range devices {
+		if state.DeviceType != deviceType {
+			continue
+		}
+		if title := deviceTrayTitle(state); title != "" {
+			return title
+		}
+	}
+	return ""
+}
+
+func deviceTrayTitle(state protocol.DeviceState) string {
+	switch state.DeviceType {
+	case protocol.DeviceTypeSteelSeriesGameBuds:
+		if !isVisibleGameBudsState(state) {
+			return ""
+		}
+		return formatTrayBattery("🎧", gameBudsTrayBattery(state), false)
+	case protocol.DeviceTypeRazer:
+		if !state.IsConnected || state.Warning != "" || state.Battery == nil {
+			return ""
+		}
+		return formatTrayBattery("🖱️", *state.Battery, false)
+	case protocol.DeviceTypeHyperXCloudAlpha:
+		if !state.IsConnected {
+			return ""
+		}
+		battery := -1
+		if state.Battery != nil {
+			battery = *state.Battery
+		}
+		charging := state.IsCharging != nil && *state.IsCharging
+		return formatTrayBattery("🎧", battery, charging)
+	default:
+		return ""
+	}
+}
+
+func buildTrayTooltipParts(devices map[string]protocol.DeviceState, dockerState docker.DockerState, systemState system.State) []string {
+	var parts []string
+	for _, state := range devices {
+		if tooltip := deviceTrayTooltip(state); tooltip != "" {
+			parts = append(parts, tooltip)
+		}
+	}
+
+	if count := dockerState.RunningCount(); count > 0 {
+		parts = append(parts, fmt.Sprintf("Docker: %d container(s)", count))
+	}
+
+	if systemState.Available {
+		if tooltip := formatSystemTooltip(systemState); tooltip != "" {
+			parts = append(parts, tooltip)
+		}
+	}
+	return parts
+}
+
+func deviceTrayTooltip(state protocol.DeviceState) string {
+	switch state.DeviceType {
+	case protocol.DeviceTypeSteelSeriesGameBuds:
+		if isVisibleGameBudsState(state) {
+			return fmt.Sprintf("GameBuds: %s", state.String())
+		}
+	case protocol.DeviceTypeRazer:
+		if state.IsConnected && state.Warning == "" {
+			return fmt.Sprintf("Razer: %s", state.String())
+		}
+	case protocol.DeviceTypeHyperXCloudAlpha:
+		if state.IsConnected {
+			return fmt.Sprintf("HyperX: %s", state.String())
+		}
+	}
+	return ""
 }
 
 func (t *TrayManager) UpdateDockerState(state docker.DockerState) {
@@ -492,11 +537,14 @@ func formatHyperXBatteryMenuTitle(state protocol.DeviceState) string {
 func formatTrayBattery(icon string, battery int, charging bool) string {
 	switch {
 	case battery >= 0:
-		return fmt.Sprintf("%s %d%%", icon, battery)
+		if icon == "" {
+			return fmt.Sprintf("%d%%", battery)
+		}
+		return fmt.Sprintf("%s%d%%", icon, battery)
 	case charging:
-		return fmt.Sprintf("%s ⚡", icon)
+		return icon + "⚡"
 	default:
-		return fmt.Sprintf("%s --", icon)
+		return ""
 	}
 }
 
@@ -533,11 +581,11 @@ func formatSystemMemoryMenuTitle(state system.State) string {
 }
 
 func formatSystemCPUTitle(percent int) string {
-	return fmt.Sprintf("🔥 %d%%", percent)
+	return fmt.Sprintf("🔥%d%%", percent)
 }
 
 func formatSystemMemoryTitle(percent int) string {
-	return fmt.Sprintf("🧠 %d%%", percent)
+	return fmt.Sprintf("🧠%d%%", percent)
 }
 
 func formatSystemTooltip(state system.State) string {

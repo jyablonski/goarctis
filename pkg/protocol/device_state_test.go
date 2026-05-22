@@ -83,7 +83,7 @@ func TestDeviceState_Equal_ComparesPointerValues(t *testing.T) {
 	leftStatusB := StatusWorn
 	stateA := DeviceState{
 		DeviceID:    "device-1",
-		DeviceType:  DeviceTypeRazerDeathAdder,
+		DeviceType:  DeviceTypeRazer,
 		Battery:     &batteryA,
 		IsCharging:  &chargingA,
 		LeftStatus:  &leftStatusA,
@@ -91,7 +91,7 @@ func TestDeviceState_Equal_ComparesPointerValues(t *testing.T) {
 	}
 	stateB := DeviceState{
 		DeviceID:    "device-1",
-		DeviceType:  DeviceTypeRazerDeathAdder,
+		DeviceType:  DeviceTypeRazer,
 		Battery:     &batteryB,
 		IsCharging:  &chargingB,
 		LeftStatus:  &leftStatusB,
@@ -107,13 +107,19 @@ func TestDeviceState_Equal_ComparesPointerValues(t *testing.T) {
 	if stateA.Equal(stateB) {
 		t.Fatal("states with different pointed-to values should not be equal")
 	}
+
+	stateB.Battery = &batteryB
+	stateB.Warning = "battery unavailable"
+	if stateA.Equal(stateB) {
+		t.Fatal("states with different warnings should not be equal")
+	}
 }
 
 func TestDeviceState_String_Razer(t *testing.T) {
 	battery := 65
 	isCharging := true
 	state := DeviceState{
-		DeviceType: DeviceTypeRazerDeathAdder,
+		DeviceType: DeviceTypeRazer,
 		Battery:    &battery,
 		IsCharging: &isCharging,
 	}
@@ -129,13 +135,26 @@ func TestDeviceState_String_Razer_NotCharging(t *testing.T) {
 	battery := 65
 	isCharging := false
 	state := DeviceState{
-		DeviceType: DeviceTypeRazerDeathAdder,
+		DeviceType: DeviceTypeRazer,
 		Battery:    &battery,
 		IsCharging: &isCharging,
 	}
 
 	result := state.String()
 	expected := "Battery: 65%"
+	if result != expected {
+		t.Errorf("String() = %q, want %q", result, expected)
+	}
+}
+
+func TestDeviceState_String_RazerWarning(t *testing.T) {
+	state := DeviceState{
+		DeviceType: DeviceTypeRazer,
+		Warning:    "Battery unavailable: OpenRazer driver is not reporting battery data",
+	}
+
+	result := state.String()
+	expected := "Battery unavailable: OpenRazer driver is not reporting battery data"
 	if result != expected {
 		t.Errorf("String() = %q, want %q", result, expected)
 	}

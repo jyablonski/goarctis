@@ -1,11 +1,63 @@
 package ui
 
 import (
+	"bytes"
+	"image"
+	"image/png"
+	"reflect"
 	"testing"
 
+	"github.com/jyablonski/goarctis/assets"
+	"github.com/jyablonski/goarctis/pkg/docker"
 	"github.com/jyablonski/goarctis/pkg/protocol"
 	"github.com/jyablonski/goarctis/pkg/system"
 )
+
+func TestTrayIconPNG(t *testing.T) {
+	img, err := png.Decode(bytes.NewReader(assets.TrayIconPNG))
+	if err != nil {
+		t.Fatalf("TrayIconPNG does not decode: %v", err)
+	}
+	if bounds := img.Bounds(); bounds.Dx() != 48 || bounds.Dy() != 48 {
+		t.Fatalf("TrayIconPNG size = %dx%d, want 48x48", bounds.Dx(), bounds.Dy())
+	}
+	if opaqueBounds := opaqueImageBounds(img); opaqueBounds.Dx() < 44 || opaqueBounds.Dy() < 36 {
+		t.Fatalf("TrayIconPNG opaque bounds = %dx%d, want at least 44x36", opaqueBounds.Dx(), opaqueBounds.Dy())
+	}
+}
+
+func opaqueImageBounds(img image.Image) image.Rectangle {
+	bounds := img.Bounds()
+	minX, minY := bounds.Max.X, bounds.Max.Y
+	maxX, maxY := bounds.Min.X, bounds.Min.Y
+	found := false
+
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			_, _, _, a := img.At(x, y).RGBA()
+			if a == 0 {
+				continue
+			}
+			found = true
+			if x < minX {
+				minX = x
+			}
+			if y < minY {
+				minY = y
+			}
+			if x+1 > maxX {
+				maxX = x + 1
+			}
+			if y+1 > maxY {
+				maxY = y + 1
+			}
+		}
+	}
+	if !found {
+		return image.Rectangle{}
+	}
+	return image.Rect(minX, minY, maxX, maxY)
+}
 
 func TestGetBatteryIcon(t *testing.T) {
 	tests := []struct {
@@ -254,14 +306,93 @@ func TestSingleBatteryFormatting(t *testing.T) {
 		t.Errorf("formatHyperXBatteryMenuTitle(charging) = %q", got)
 	}
 
-	if got := formatTrayBattery("🎧", 45, false); got != "🎧 45%" {
+	if got := formatTrayBattery("🎧", 45, false); got != "🎧45%" {
 		t.Errorf("formatTrayBattery(with battery) = %q", got)
 	}
-	if got := formatTrayBattery("🎧", -1, true); got != "🎧 ⚡" {
+	if got := formatTrayBattery("🎧", -1, true); got != "🎧⚡" {
 		t.Errorf("formatTrayBattery(charging) = %q", got)
 	}
-	if got := formatTrayBattery("🎧", -1, false); got != "🎧 --" {
+	if got := formatTrayBattery("🎧", -1, false); got != "" {
 		t.Errorf("formatTrayBattery(empty) = %q", got)
+	}
+}
+
+func TestBuildTrayTitleParts_StableOrderAndSkipsWarnings(t *testing.T) {
+	hyperxBattery := 79
+	memoryPercent := 51
+	razerBattery := 33
+	devices := map[string]protocol.DeviceState{
+		"razer-warning": {
+			DeviceType:  protocol.DeviceTypeRazer,
+			IsConnected: true,
+			Warning:     "Battery unavailable",
+		},
+		"hyperx": {
+			DeviceType:  protocol.DeviceTypeHyperXCloudAlpha,
+			IsConnected: true,
+			Battery:     &hyperxBattery,
+		},
+		"razer": {
+			DeviceType:  protocol.DeviceTypeRazer,
+			IsConnected: true,
+			Battery:     &razerBattery,
+		},
+	}
+	dockerState := docker.DockerState{
+		Available: true,
+		Containers: []docker.ContainerInfo{
+			{ID: "abc", Name: "web"},
+		},
+	}
+	systemState := system.State{
+		Available:     true,
+		MemoryPercent: &memoryPercent,
+	}
+
+	got := buildTrayTitleParts(devices, dockerState, systemState)
+	expected := []string{"🎧79%", "🖱️33%", "🐳1", "🧠51%"}
+	if !reflect.DeepEqual(got, expected) {
+		t.Fatalf("buildTrayTitleParts() = %#v, want %#v", got, expected)
+	}
+}
+
+func TestBuildTrayTooltipParts(t *testing.T) {
+	hyperxBattery := 79
+	systemCPU := 12
+	systemMemory := 51
+	devices := map[string]protocol.DeviceState{
+		"razer-warning": {
+			DeviceType:  protocol.DeviceTypeRazer,
+			IsConnected: true,
+			Warning:     "Battery unavailable",
+		},
+		"hyperx": {
+			DeviceType:  protocol.DeviceTypeHyperXCloudAlpha,
+			IsConnected: true,
+			Battery:     &hyperxBattery,
+		},
+	}
+	dockerState := docker.DockerState{
+		Available: true,
+		Containers: []docker.ContainerInfo{
+			{ID: "abc", Name: "web"},
+			{ID: "def", Name: "worker"},
+		},
+	}
+	systemState := system.State{
+		Available:     true,
+		CPUPercent:    &systemCPU,
+		MemoryPercent: &systemMemory,
+	}
+
+	got := buildTrayTooltipParts(devices, dockerState, systemState)
+	expected := []string{
+		"HyperX: Battery: 79%",
+		"Docker: 2 container(s)",
+		"System: CPU: 12%, Memory: 51%",
+	}
+	if !reflect.DeepEqual(got, expected) {
+		t.Fatalf("buildTrayTooltipParts() = %#v, want %#v", got, expected)
 	}
 }
 
@@ -410,7 +541,7 @@ func TestTrayManager_DisabledRazer_NilGuard(t *testing.T) {
 	battery := 70
 	state := protocol.DeviceState{
 		DeviceID:    "razer-device",
-		DeviceType:  "razer_deathadder",
+		DeviceType:  protocol.DeviceTypeRazer,
 		Battery:     &battery,
 		IsConnected: true,
 	}
@@ -459,7 +590,7 @@ func TestSystemFormatting(t *testing.T) {
 	if got := formatSystemMemoryMenuTitle(normal); got != "  🧠 Memory: 32% (10.0 GiB / 32.0 GiB)" {
 		t.Errorf("formatSystemMemoryMenuTitle() = %q", got)
 	}
-	if got := formatSystemMemoryTitle(32); got != "🧠 32%" {
+	if got := formatSystemMemoryTitle(32); got != "🧠32%" {
 		t.Errorf("formatSystemMemoryTitle() = %q", got)
 	}
 
@@ -468,7 +599,7 @@ func TestSystemFormatting(t *testing.T) {
 	if got := formatSystemCPUMenuTitle(spiking); got != "  🔥 CPU: 18%" {
 		t.Errorf("formatSystemCPUMenuTitle(spiking) = %q", got)
 	}
-	if got := formatSystemCPUTitle(87); got != "🔥 87%" {
+	if got := formatSystemCPUTitle(87); got != "🔥87%" {
 		t.Errorf("formatSystemCPUTitle() = %q", got)
 	}
 }
