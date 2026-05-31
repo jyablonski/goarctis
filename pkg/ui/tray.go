@@ -51,7 +51,18 @@ type TrayManager struct {
 	devices     map[string]protocol.DeviceState
 	dockerState docker.DockerState
 	systemState system.State
+	hasDocker   bool
+	hasSystem   bool
+	renderCh    chan struct{}
 	mu          sync.RWMutex
+}
+
+type traySnapshot struct {
+	devices     map[string]protocol.DeviceState
+	dockerState docker.DockerState
+	systemState system.State
+	hasDocker   bool
+	hasSystem   bool
 }
 
 func NewTrayManager() *TrayManager {
@@ -62,6 +73,7 @@ func NewTrayManager() *TrayManager {
 
 func (t *TrayManager) Initialize(cfg TrayConfig) {
 	t.config = cfg
+	t.renderCh = make(chan struct{}, 1)
 
 	systray.SetIcon(assets.TrayIconPNG)
 	systray.SetTitle("")
@@ -119,6 +131,8 @@ func (t *TrayManager) Initialize(cfg TrayConfig) {
 
 	systray.AddSeparator()
 	t.mQuit = systray.AddMenuItem("Quit", "Quit goarctis")
+
+	go t.renderLoop()
 }
 
 func (t *TrayManager) SetStatus(status string) {
@@ -131,17 +145,7 @@ func (t *TrayManager) UpdateDeviceState(deviceID string, state protocol.DeviceSt
 	t.mu.Unlock()
 
 	log.Printf("State updated for %s: %s", deviceID, state)
-
-	switch state.DeviceType {
-	case protocol.DeviceTypeSteelSeriesGameBuds:
-		t.updateGameBuds(state)
-	case protocol.DeviceTypeRazer:
-		t.updateRazer(state)
-	case protocol.DeviceTypeHyperXCloudAlpha:
-		t.updateHyperX(state)
-	}
-
-	t.updateTrayIcon()
+	t.requestRender()
 }
 
 func addDisabledHiddenMenuItem(title, tooltip string) *systray.MenuItem {
@@ -275,12 +279,89 @@ func (t *TrayManager) updateHyperX(state protocol.DeviceState) {
 	t.hyperxBattery.Enable()
 }
 
-func (t *TrayManager) updateTrayIcon() {
+func (t *TrayManager) requestRender() {
+	if t.renderCh == nil {
+		return
+	}
+	select {
+	case t.renderCh <- struct{}{}:
+	default:
+	}
+}
+
+func (t *TrayManager) renderLoop() {
+	for range t.renderCh {
+		t.render(t.snapshot())
+	}
+}
+
+func (t *TrayManager) snapshot() traySnapshot {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	titleParts := buildTrayTitleParts(t.devices, t.dockerState, t.systemState)
-	tooltipParts := buildTrayTooltipParts(t.devices, t.dockerState, t.systemState)
+	devices := make(map[string]protocol.DeviceState, len(t.devices))
+	for id, state := range t.devices {
+		devices[id] = state
+	}
+	return traySnapshot{
+		devices:     devices,
+		dockerState: t.dockerState,
+		systemState: t.systemState,
+		hasDocker:   t.hasDocker,
+		hasSystem:   t.hasSystem,
+	}
+}
+
+func (t *TrayManager) render(snapshot traySnapshot) {
+	t.renderDevices(snapshot.devices)
+	if snapshot.hasDocker {
+		t.renderDocker(snapshot.dockerState)
+	}
+	if snapshot.hasSystem {
+		t.renderSystem(snapshot.systemState)
+	}
+	t.renderTrayIcon(snapshot)
+}
+
+func (t *TrayManager) renderDevices(devices map[string]protocol.DeviceState) {
+	t.updateGameBuds(deviceMenuStateForType(devices, protocol.DeviceTypeSteelSeriesGameBuds))
+	t.updateRazer(deviceMenuStateForType(devices, protocol.DeviceTypeRazer))
+	t.updateHyperX(deviceMenuStateForType(devices, protocol.DeviceTypeHyperXCloudAlpha))
+}
+
+func deviceMenuStateForType(devices map[string]protocol.DeviceState, deviceType string) protocol.DeviceState {
+	var fallback protocol.DeviceState
+	for _, state := range devices {
+		if state.DeviceType != deviceType {
+			continue
+		}
+		if fallback.DeviceType == "" {
+			fallback = state
+		}
+		if isVisibleDeviceMenuState(state) {
+			return state
+		}
+	}
+	if fallback.DeviceType != "" {
+		return fallback
+	}
+	return protocol.DeviceState{DeviceType: deviceType}
+}
+
+func isVisibleDeviceMenuState(state protocol.DeviceState) bool {
+	switch state.DeviceType {
+	case protocol.DeviceTypeSteelSeriesGameBuds:
+		return isVisibleGameBudsState(state)
+	case protocol.DeviceTypeRazer, protocol.DeviceTypeHyperXCloudAlpha:
+		return state.IsConnected
+	default:
+		return false
+	}
+}
+
+func (t *TrayManager) renderTrayIcon(snapshot traySnapshot) {
+	titleParts := buildTrayTitleParts(snapshot.devices, snapshot.dockerState, snapshot.systemState)
+	tooltipParts := buildTrayTooltipParts(snapshot.devices, snapshot.dockerState, snapshot.systemState)
 
 	systray.SetTitle(strings.Join(titleParts, " "))
 	if len(tooltipParts) == 0 {
@@ -399,12 +480,17 @@ func deviceTrayTooltip(state protocol.DeviceState) string {
 func (t *TrayManager) UpdateDockerState(state docker.DockerState) {
 	t.mu.Lock()
 	t.dockerState = state
+	t.hasDocker = true
 	t.mu.Unlock()
 
+	log.Printf("Docker state updated: available=%v, containers=%d", state.Available, state.RunningCount())
+	t.requestRender()
+}
+
+func (t *TrayManager) renderDocker(state docker.DockerState) {
 	if t.dockerMenu == nil {
 		return
 	}
-	defer t.updateTrayIcon()
 
 	if !state.Available {
 		t.dockerMenu.SetTitle("🐳 Docker (unavailable)")
@@ -428,19 +514,23 @@ func (t *TrayManager) UpdateDockerState(state docker.DockerState) {
 		t.dockerStopAll.Show()
 		t.dockerStopAll.Enable()
 	}
-
-	log.Printf("Docker state updated: available=%v, containers=%d", state.Available, count)
 }
 
 func (t *TrayManager) UpdateSystemState(state system.State) {
 	t.mu.Lock()
 	t.systemState = state
+	t.hasSystem = true
 	t.mu.Unlock()
 
+	log.Printf("System state updated: cpu=%s, memory=%s",
+		formatOptionalPercent(state.CPUPercent), formatOptionalPercent(state.MemoryPercent))
+	t.requestRender()
+}
+
+func (t *TrayManager) renderSystem(state system.State) {
 	if t.systemMenu == nil {
 		return
 	}
-	defer t.updateTrayIcon()
 
 	if !state.Available {
 		t.systemMenu.SetTitle("🖥️ System (unavailable)")
@@ -461,9 +551,6 @@ func (t *TrayManager) UpdateSystemState(state system.State) {
 		t.systemPeak.Show()
 		t.systemPeak.Enable()
 	}
-
-	log.Printf("System state updated: cpu=%s, memory=%s",
-		formatOptionalPercent(state.CPUPercent), formatOptionalPercent(state.MemoryPercent))
 }
 
 func (t *TrayManager) DockerStopAllChannel() <-chan struct{} {

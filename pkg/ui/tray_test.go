@@ -396,6 +396,25 @@ func TestBuildTrayTooltipParts(t *testing.T) {
 	}
 }
 
+func TestDeviceMenuStateForType_PrefersVisibleState(t *testing.T) {
+	visibleBattery := 92
+	devices := map[string]protocol.DeviceState{
+		"razer-disconnected": {
+			DeviceType: protocol.DeviceTypeRazer,
+		},
+		"razer-connected": {
+			DeviceType:  protocol.DeviceTypeRazer,
+			IsConnected: true,
+			Battery:     &visibleBattery,
+		},
+	}
+
+	got := deviceMenuStateForType(devices, protocol.DeviceTypeRazer)
+	if !got.IsConnected || got.Battery == nil || *got.Battery != visibleBattery {
+		t.Fatalf("deviceMenuStateForType() = %#v, want connected Razer state", got)
+	}
+}
+
 func BenchmarkFormatGameBudsBattery(b *testing.B) {
 	battery := 75
 	status := protocol.StatusWorn
