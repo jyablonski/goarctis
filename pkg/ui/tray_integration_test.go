@@ -115,8 +115,12 @@ func TestTrayManager_UpdateDockerState_WithoutInitialize(t *testing.T) {
 
 	manager.mu.RLock()
 	stored := manager.dockerState
+	hasDocker := manager.hasDocker
 	manager.mu.RUnlock()
 
+	if !hasDocker {
+		t.Error("Docker state should be marked initialized")
+	}
 	if !stored.Available {
 		t.Error("Docker state should be available")
 	}
@@ -139,8 +143,12 @@ func TestTrayManager_UpdateSystemState_WithoutInitialize(t *testing.T) {
 
 	manager.mu.RLock()
 	stored := manager.systemState
+	hasSystem := manager.hasSystem
 	manager.mu.RUnlock()
 
+	if !hasSystem {
+		t.Error("System state should be marked initialized")
+	}
 	if !stored.Available {
 		t.Error("System state should be available")
 	}
@@ -190,5 +198,45 @@ func TestTrayManager_DockerState_WithDevices(t *testing.T) {
 	}
 	if dockerCount != 2 {
 		t.Errorf("Expected 2 Docker containers, got %d", dockerCount)
+	}
+}
+
+func TestTrayManager_SnapshotCopiesRenderState(t *testing.T) {
+	manager := NewTrayManager()
+
+	battery := 71
+	manager.UpdateDeviceState("hyperx", protocol.DeviceState{
+		DeviceID:    "hyperx",
+		DeviceType:  protocol.DeviceTypeHyperXCloudAlpha,
+		IsConnected: true,
+		Battery:     &battery,
+	})
+	manager.UpdateDockerState(docker.DockerState{
+		Available: true,
+		Containers: []docker.ContainerInfo{
+			{ID: "abc123", Name: "web"},
+		},
+	})
+	manager.UpdateSystemState(system.State{
+		Available:     true,
+		CPUPercent:    intPtr(11),
+		MemoryPercent: intPtr(33),
+	})
+
+	snapshot := manager.snapshot()
+	delete(snapshot.devices, "hyperx")
+
+	manager.mu.RLock()
+	_, stillStored := manager.devices["hyperx"]
+	manager.mu.RUnlock()
+
+	if !snapshot.hasDocker {
+		t.Error("snapshot should include initialized Docker state")
+	}
+	if !snapshot.hasSystem {
+		t.Error("snapshot should include initialized system state")
+	}
+	if !stillStored {
+		t.Error("snapshot devices map should not alias manager state")
 	}
 }
