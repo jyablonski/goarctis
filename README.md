@@ -75,35 +75,19 @@ sudo pacman -S libayatana-appindicator gtk3 pkgconf
 
 ## Usage
 
-| Flag                 | Description                                          | Example                       |
-| -------------------- | ---------------------------------------------------- | ----------------------------- |
-| `--version`          | Print version and exit                               | `goarctis --version`          |
-| `--self-update`      | Update to the latest release and restart the service | `goarctis --self-update`      |
-| `--disable-gamebuds` | Skip GameBuds monitoring                             | `goarctis --disable-gamebuds` |
-| `--disable-razer`    | Skip Razer device monitoring                         | `goarctis --disable-razer`    |
-| `--disable-hyperx`   | Skip HyperX Cloud Alpha Wireless monitoring          | `goarctis --disable-hyperx`   |
-| `--disable-system`   | Skip CPU, memory, and temperature monitoring         | `goarctis --disable-system`   |
-| `--gpu-thermal-guard`| Auto-reduce NVIDIA GPU power limit when hot (needs root) | `sudo goarctis --gpu-thermal-guard` |
+| Flag                  | Description                                              | Example                             |
+| --------------------- | -------------------------------------------------------- | ----------------------------------- |
+| `--version`           | Print version and exit                                   | `goarctis --version`                |
+| `--self-update`       | Update to the latest release and restart the service     | `goarctis --self-update`            |
+| `--disable-gamebuds`  | Skip GameBuds monitoring                                 | `goarctis --disable-gamebuds`       |
+| `--disable-razer`     | Skip Razer device monitoring                             | `goarctis --disable-razer`          |
+| `--disable-hyperx`    | Skip HyperX Cloud Alpha Wireless monitoring              | `goarctis --disable-hyperx`         |
+| `--disable-system`    | Skip CPU, memory, and temperature monitoring             | `goarctis --disable-system`         |
+| `--gpu-thermal-guard` | Auto-reduce NVIDIA GPU power limit when hot (needs root) | `sudo goarctis --gpu-thermal-guard` |
 
 Disabled sections are completely hidden from the tray dropdown menu.
 
 Use `goarctis --help` for all available flags.
-
-### GPU Thermal Guard
-
-`--gpu-thermal-guard` is an opt-in, NVIDIA-only safeguard. When an NVIDIA GPU
-reaches **85 °C** it lowers the card's power-management limit to **80 %** of its
-default, and restores the default once the card cools back to **75 °C**
-(hysteresis prevents oscillation). The clamp is always bounded by the card's
-reported min/max power limits.
-
-It is **off by default** and requires **root** to change the power limit —
-without sufficient privilege it logs a warning and falls back to pure
-monitoring. The change is session-only and is reverted on exit.
-
-The thresholds are sensible fixed defaults; see
-[docs/gpu_thermal_guard.md](docs/gpu_thermal_guard.md) for the full design and
-the rationale for keeping the surface to a single flag.
 
 ## Systemd Service
 
@@ -155,11 +139,6 @@ make build-test     # Build as goarctis-test (avoids conflicts with running inst
 make clean          # Remove build artifacts
 make deps           # Download and tidy dependencies
 ```
-
-## Documentation
-
-- [How goarctis works](docs/how_it_works.md)
-- [Project structure](docs/code_structure.md)
 
 ## License
 
