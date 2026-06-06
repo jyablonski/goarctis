@@ -3,6 +3,7 @@ module github.com/jyablonski/goarctis
 go 1.26
 
 require (
+	github.com/NVIDIA/go-nvml v0.13.0-1
 	github.com/getlantern/systray v1.2.2
 	github.com/godbus/dbus/v5 v5.2.1
 	golang.org/x/sys v0.27.0

@@ -14,6 +14,10 @@ import (
 	"github.com/jyablonski/goarctis/pkg/version"
 )
 
+// hotTempThresholdC is the temperature, in Celsius, at or above which a
+// sensor is surfaced in the tray title bar.
+const hotTempThresholdC = 80
+
 type TrayConfig struct {
 	DisableGameBuds bool
 	DisableRazer    bool
@@ -44,6 +48,8 @@ type TrayManager struct {
 	systemMenu   *systray.MenuItem
 	systemCPU    *systray.MenuItem
 	systemPeak   *systray.MenuItem
+	systemTemp   *systray.MenuItem
+	systemGPU    *systray.MenuItem
 	systemMemory *systray.MenuItem
 
 	config TrayConfig
@@ -117,6 +123,12 @@ func (t *TrayManager) Initialize(cfg TrayConfig) {
 		t.systemPeak = systray.AddMenuItem("  🔥 CPU Peak: --", "Recent CPU peak")
 		t.systemPeak.Disable()
 		t.systemPeak.Hide()
+		t.systemTemp = systray.AddMenuItem("  🌡️ Temp: checking...", "Temperature sensors")
+		t.systemTemp.Disable()
+		t.systemTemp.Hide()
+		t.systemGPU = systray.AddMenuItem("  🎮 GPU: checking...", "GPU temperature")
+		t.systemGPU.Disable()
+		t.systemGPU.Hide()
 		t.systemMemory = systray.AddMenuItem("  🧠 Memory: checking...", "Memory utilization")
 		t.systemMemory.Disable()
 	}
@@ -390,6 +402,9 @@ func buildTrayTitleParts(devices map[string]protocol.DeviceState, dockerState do
 	}
 
 	if systemState.Available {
+		if title := formatSystemTemperatureTitle(systemState); title != "" {
+			parts = append(parts, title)
+		}
 		if systemState.CPUSpiking && systemState.CPUPercent != nil {
 			parts = append(parts, formatSystemCPUTitle(*systemState.CPUPercent))
 		}
@@ -522,8 +537,11 @@ func (t *TrayManager) UpdateSystemState(state system.State) {
 	t.hasSystem = true
 	t.mu.Unlock()
 
-	log.Printf("System state updated: cpu=%s, memory=%s",
-		formatOptionalPercent(state.CPUPercent), formatOptionalPercent(state.MemoryPercent))
+	log.Printf("System state updated: cpu=%s, memory=%s, max_temp=%s, gpu_temp=%s",
+		formatOptionalPercent(state.CPUPercent),
+		formatOptionalPercent(state.MemoryPercent),
+		formatOptionalTemp(state.MaxSystemTempC),
+		formatOptionalTemp(state.MaxGPUTempC))
 	t.requestRender()
 }
 
@@ -537,6 +555,8 @@ func (t *TrayManager) renderSystem(state system.State) {
 		t.systemCPU.SetTitle("  ⚙️ CPU: unavailable")
 		t.systemMemory.SetTitle("  🧠 Memory: unavailable")
 		t.systemPeak.Hide()
+		t.systemTemp.Hide()
+		t.systemGPU.Hide()
 		return
 	}
 
@@ -550,6 +570,22 @@ func (t *TrayManager) renderSystem(state system.State) {
 		t.systemPeak.SetTitle(formatSystemPeakMenuTitle(state))
 		t.systemPeak.Show()
 		t.systemPeak.Enable()
+	}
+
+	if state.MaxCPUTempC == nil && state.MaxGPUTempC == nil && state.MaxSystemTempC == nil {
+		t.systemTemp.Hide()
+	} else {
+		t.systemTemp.SetTitle(formatSystemTempMenuTitle(state))
+		t.systemTemp.Show()
+		t.systemTemp.Enable()
+	}
+
+	if len(state.GPUs) == 0 {
+		t.systemGPU.Hide()
+	} else {
+		t.systemGPU.SetTitle(formatSystemGPUMenuTitle(state.GPUs))
+		t.systemGPU.Show()
+		t.systemGPU.Enable()
 	}
 }
 
@@ -667,12 +703,90 @@ func formatSystemMemoryMenuTitle(state system.State) string {
 	)
 }
 
+func formatSystemTempMenuTitle(state system.State) string {
+	var parts []string
+	if state.MaxCPUTempC != nil {
+		parts = append(parts, fmt.Sprintf("CPU %s", formatTempC(*state.MaxCPUTempC)))
+	}
+	if state.MaxGPUTempC != nil {
+		parts = append(parts, fmt.Sprintf("GPU %s", formatTempC(*state.MaxGPUTempC)))
+	}
+	if state.MaxSystemTempC != nil {
+		parts = append(parts, fmt.Sprintf("Max %s", formatTempC(*state.MaxSystemTempC)))
+	}
+	if len(parts) == 0 {
+		return "  🌡️ Temp: --"
+	}
+	return "  🌡️ Temp: " + strings.Join(parts, " / ")
+}
+
+func formatSystemGPUMenuTitle(gpus []system.GPUStats) string {
+	if len(gpus) == 0 {
+		return "  🎮 GPU: --"
+	}
+	parts := make([]string, 0, len(gpus))
+	for _, gpu := range gpus {
+		parts = append(parts, formatGPUCompact(gpu))
+	}
+	return "  🎮 GPU: " + joinNames(parts, 2)
+}
+
+func formatGPUCompact(gpu system.GPUStats) string {
+	name := gpu.Name
+	if name == "" {
+		name = fmt.Sprintf("GPU %d", gpu.Index)
+	}
+
+	var details []string
+	if gpu.TemperatureC != nil {
+		details = append(details, formatTempC(*gpu.TemperatureC))
+	}
+	if gpu.UtilizationPct != nil {
+		details = append(details, fmt.Sprintf("%d%%", *gpu.UtilizationPct))
+	}
+	if gpu.MemoryUsedBytes != nil && gpu.MemoryTotalBytes != nil {
+		details = append(details, fmt.Sprintf("%s/%s VRAM",
+			formatBytes(*gpu.MemoryUsedBytes),
+			formatBytes(*gpu.MemoryTotalBytes)))
+	}
+	if gpu.PowerDrawW != nil {
+		details = append(details, fmt.Sprintf("%.0fW", *gpu.PowerDrawW))
+	}
+	if gpu.FanSpeedPct != nil {
+		details = append(details, fmt.Sprintf("fan %d%%", *gpu.FanSpeedPct))
+	}
+	if gpu.GraphicsClockMHz != nil && gpu.MemoryClockMHz != nil {
+		details = append(details, fmt.Sprintf("%d/%d MHz", *gpu.GraphicsClockMHz, *gpu.MemoryClockMHz))
+	}
+	if gpu.PState != "" {
+		details = append(details, gpu.PState)
+	}
+	if len(details) == 0 {
+		details = append(details, "--")
+	}
+
+	return fmt.Sprintf("%s %s", name, strings.Join(details, " "))
+}
+
 func formatSystemCPUTitle(percent int) string {
 	return fmt.Sprintf("🔥%d%%", percent)
 }
 
 func formatSystemMemoryTitle(percent int) string {
 	return fmt.Sprintf("🧠%d%%", percent)
+}
+
+func formatSystemTemperatureTitle(state system.State) string {
+	switch {
+	case state.MaxGPUTempC != nil && *state.MaxGPUTempC >= hotTempThresholdC:
+		return fmt.Sprintf("🎮%s", formatTempC(*state.MaxGPUTempC))
+	case state.MaxCPUTempC != nil && *state.MaxCPUTempC >= hotTempThresholdC:
+		return fmt.Sprintf("🌡️%s", formatTempC(*state.MaxCPUTempC))
+	case state.MaxSystemTempC != nil && *state.MaxSystemTempC >= hotTempThresholdC:
+		return fmt.Sprintf("🌡️%s", formatTempC(*state.MaxSystemTempC))
+	default:
+		return ""
+	}
 }
 
 func formatSystemTooltip(state system.State) string {
@@ -687,10 +801,23 @@ func formatSystemTooltip(state system.State) string {
 	if state.MemoryPercent != nil {
 		parts = append(parts, fmt.Sprintf("Memory: %d%%", *state.MemoryPercent))
 	}
+	if state.MaxCPUTempC != nil {
+		parts = append(parts, fmt.Sprintf("CPU temp: %s", formatTempC(*state.MaxCPUTempC)))
+	}
+	if state.MaxGPUTempC != nil {
+		parts = append(parts, fmt.Sprintf("GPU temp: %s", formatTempC(*state.MaxGPUTempC)))
+	}
+	if state.MaxSystemTempC != nil {
+		parts = append(parts, fmt.Sprintf("Max temp: %s", formatTempC(*state.MaxSystemTempC)))
+	}
 	if len(parts) == 0 {
 		return ""
 	}
 	return "System: " + strings.Join(parts, ", ")
+}
+
+func formatTempC(temp float64) string {
+	return fmt.Sprintf("%.0f°C", temp)
 }
 
 func formatBytes(bytes uint64) string {
@@ -703,6 +830,13 @@ func formatOptionalPercent(percent *int) string {
 		return "--"
 	}
 	return fmt.Sprintf("%d%%", *percent)
+}
+
+func formatOptionalTemp(temp *float64) string {
+	if temp == nil {
+		return "--"
+	}
+	return formatTempC(*temp)
 }
 
 func formatGameBudsBattery(battery *int, status *protocol.EarbudStatus, side string) string {

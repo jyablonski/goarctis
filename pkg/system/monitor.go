@@ -1,6 +1,7 @@
 package system
 
 import (
+	"io"
 	"log"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ const (
 const (
 	minCPUChange    = 5
 	minMemoryChange = 1
+	minTempChange   = 1
 )
 
 type State struct {
@@ -26,6 +28,47 @@ type State struct {
 	MemoryPercent    *int
 	MemoryUsedBytes  uint64
 	MemoryTotalBytes uint64
+	GPUs             []GPUStats
+	Sensors          []SensorReading
+	MaxCPUTempC      *float64
+	MaxGPUTempC      *float64
+	MaxSystemTempC   *float64
+}
+
+type GPUStats struct {
+	Index                int
+	ID                   string
+	Name                 string
+	UtilizationPct       *int
+	MemoryUtilizationPct *int
+	MemoryUsedBytes      *uint64
+	MemoryTotalBytes     *uint64
+	TemperatureC         *float64
+	FanSpeedPct          *int
+	PowerDrawW           *float64
+	PowerLimitW          *float64
+	DefaultPowerLimitW   *float64
+	MinPowerLimitW       *float64
+	MaxPowerLimitW       *float64
+	GraphicsClockMHz     *int
+	MemoryClockMHz       *int
+	PState               string
+	Processes            []GPUProcess
+}
+
+type GPUProcess struct {
+	PID             int
+	Kind            string
+	UsedMemoryBytes *uint64
+}
+
+type SensorReading struct {
+	ID           string
+	Label        string
+	Source       string
+	Chip         string
+	TemperatureC float64
+	Hidden       bool
 }
 
 type Sampler interface {
@@ -60,6 +103,12 @@ type Monitor struct {
 
 func NewMonitor(interval time.Duration) *Monitor {
 	return NewMonitorWithSampler(interval, NewProcSampler())
+}
+
+// NewMonitorWithConfig builds a monitor whose sampler has the GPU thermal guard
+// configured. A disabled config behaves like NewMonitor.
+func NewMonitorWithConfig(interval time.Duration, cfg GovernorConfig) *Monitor {
+	return NewMonitorWithSampler(interval, NewProcSamplerWithConfig(cfg))
 }
 
 func NewMonitorWithSampler(interval time.Duration, sampler Sampler) *Monitor {
@@ -106,10 +155,21 @@ func (m *Monitor) Start() {
 
 func (m *Monitor) Stop() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.stopped {
-		m.stopped = true
-		close(m.stopCh)
+	if m.stopped {
+		m.mu.Unlock()
+		return
+	}
+	m.stopped = true
+	close(m.stopCh)
+	sampler := m.sampler
+	m.mu.Unlock()
+
+	// Release sampler-held resources (e.g. NVML + thermal-guard restore) once
+	// the poll loop has been signalled to stop.
+	if closer, ok := sampler.(io.Closer); ok {
+		if err := closer.Close(); err != nil {
+			log.Printf("system sampler close: %v", err)
+		}
 	}
 }
 
@@ -213,6 +273,21 @@ func (m *Monitor) stateChanged(newState State) bool {
 	if old.MemoryTotalBytes != newState.MemoryTotalBytes {
 		return true
 	}
+	if floatPointerChanged(old.MaxCPUTempC, newState.MaxCPUTempC, minTempChange) {
+		return true
+	}
+	if floatPointerChanged(old.MaxGPUTempC, newState.MaxGPUTempC, minTempChange) {
+		return true
+	}
+	if floatPointerChanged(old.MaxSystemTempC, newState.MaxSystemTempC, minTempChange) {
+		return true
+	}
+	if gpuSummariesChanged(old.GPUs, newState.GPUs) {
+		return true
+	}
+	if len(old.Sensors) != len(newState.Sensors) {
+		return true
+	}
 	return false
 }
 
@@ -227,6 +302,38 @@ func intPointerChanged(old, new *int, threshold int) bool {
 }
 
 func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func floatPointerChanged(old, new *float64, threshold float64) bool {
+	if old == nil && new == nil {
+		return false
+	}
+	if old == nil || new == nil {
+		return true
+	}
+	return absFloat(*old-*new) >= threshold
+}
+
+func gpuSummariesChanged(old, new []GPUStats) bool {
+	if len(old) != len(new) {
+		return true
+	}
+	for i := range old {
+		if old[i].ID != new[i].ID || old[i].Name != new[i].Name {
+			return true
+		}
+		if floatPointerChanged(old[i].TemperatureC, new[i].TemperatureC, minTempChange) {
+			return true
+		}
+	}
+	return false
+}
+
+func absFloat(v float64) float64 {
 	if v < 0 {
 		return -v
 	}

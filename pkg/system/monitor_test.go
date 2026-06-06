@@ -58,6 +58,33 @@ func TestMonitor_OnChangeUsesThresholds(t *testing.T) {
 	}
 }
 
+func TestMonitor_OnChangeUsesTemperatureThreshold(t *testing.T) {
+	first := stateWithMetrics(intPtr(10), intPtr(32))
+	first.MaxSystemTempC = floatPtr(70)
+	second := stateWithMetrics(intPtr(10), intPtr(32))
+	second.MaxSystemTempC = floatPtr(70.5)
+	third := stateWithMetrics(intPtr(10), intPtr(32))
+	third.MaxSystemTempC = floatPtr(71)
+	sampler := &fakeSystemSampler{states: []State{first, second, third}}
+	m := NewMonitorWithSampler(time.Second, sampler)
+
+	var states []State
+	m.SetOnChange(func(state State) {
+		states = append(states, state)
+	})
+
+	m.poll()
+	m.poll()
+	m.poll()
+
+	if len(states) != 2 {
+		t.Fatalf("callback count = %d, want 2", len(states))
+	}
+	if states[1].MaxSystemTempC == nil || *states[1].MaxSystemTempC != 71 {
+		t.Fatalf("second notified max temp = %v, want 71", states[1].MaxSystemTempC)
+	}
+}
+
 func TestMonitor_CPUSpikeHold(t *testing.T) {
 	start := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
 	sampler := &fakeSystemSampler{states: []State{
@@ -175,6 +202,10 @@ func stateWithMetrics(cpu, memory *int) State {
 		MemoryUsedBytes:  320 * 1024,
 		MemoryTotalBytes: 1000 * 1024,
 	}
+}
+
+func floatPtr(v float64) *float64 {
+	return &v
 }
 
 type fakeSystemSampler struct {

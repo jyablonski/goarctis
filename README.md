@@ -6,11 +6,11 @@
   <img width="128" height="128" alt="goarctis logo" src="assets/goarctis.svg" />
 </p>
 
-A Linux system tray application for monitoring wireless peripheral battery levels, Docker containers, and host CPU/memory utilization.
+A Linux system tray application for monitoring wireless peripheral battery levels, Docker containers, and host CPU/memory/temperature utilization.
 
 ## What It Does
 
-`goarctis` sits in the system tray and shows wireless peripheral battery state, Docker container counts, and host CPU/memory utilization.
+`goarctis` sits in the system tray and shows wireless peripheral battery state, Docker container counts, and host CPU/memory/temperature utilization.
 
 Supported sources:
 
@@ -19,6 +19,8 @@ Supported sources:
 - Razer wireless devices through OpenRazer, with a tray warning when OpenRazer stops reporting battery data
 - Docker containers through the Docker CLI
 - CPU and memory through Linux procfs
+- Temperature sensors through Linux hwmon sysfs
+- Optional NVIDIA GPU utilization, VRAM, power, fan, clock, and temperature data through NVML when an NVIDIA GPU and driver are detected
 
 <img width="320" height="660" alt="goarctis system tray" src="assets/tray-screenshot.png" />
 
@@ -68,6 +70,8 @@ sudo pacman -S libayatana-appindicator gtk3 pkgconf
 - **Razer devices:** [OpenRazer](https://openrazer.github.io/) daemon installed and running for battery percentages. If a Razer HID device is present but OpenRazer is unavailable or not reporting battery data, goarctis shows a tray warning instead.
 - **Docker monitoring:** Docker CLI available in `PATH`
 - **CPU/memory monitoring:** Linux `/proc` mounted normally
+- **Temperature monitoring:** Linux `/sys/class/hwmon` mounted normally. Sensor labels come from the kernel/driver and can vary by machine.
+- **NVIDIA GPU monitoring:** optional. If `libnvidia-ml.so` and at least one accessible NVIDIA GPU are present, goarctis shows richer GPU metrics. Without them, system monitoring continues with hwmon/procfs only.
 
 ## Usage
 
@@ -78,11 +82,28 @@ sudo pacman -S libayatana-appindicator gtk3 pkgconf
 | `--disable-gamebuds` | Skip GameBuds monitoring                             | `goarctis --disable-gamebuds` |
 | `--disable-razer`    | Skip Razer device monitoring                         | `goarctis --disable-razer`    |
 | `--disable-hyperx`   | Skip HyperX Cloud Alpha Wireless monitoring          | `goarctis --disable-hyperx`   |
-| `--disable-system`   | Skip CPU and memory monitoring                       | `goarctis --disable-system`   |
+| `--disable-system`   | Skip CPU, memory, and temperature monitoring         | `goarctis --disable-system`   |
+| `--gpu-thermal-guard`| Auto-reduce NVIDIA GPU power limit when hot (needs root) | `sudo goarctis --gpu-thermal-guard` |
 
 Disabled sections are completely hidden from the tray dropdown menu.
 
 Use `goarctis --help` for all available flags.
+
+### GPU Thermal Guard
+
+`--gpu-thermal-guard` is an opt-in, NVIDIA-only safeguard. When an NVIDIA GPU
+reaches **85 °C** it lowers the card's power-management limit to **80 %** of its
+default, and restores the default once the card cools back to **75 °C**
+(hysteresis prevents oscillation). The clamp is always bounded by the card's
+reported min/max power limits.
+
+It is **off by default** and requires **root** to change the power limit —
+without sufficient privilege it logs a warning and falls back to pure
+monitoring. The change is session-only and is reverted on exit.
+
+The thresholds are sensible fixed defaults; see
+[docs/gpu_thermal_guard.md](docs/gpu_thermal_guard.md) for the full design and
+the rationale for keeping the surface to a single flag.
 
 ## Systemd Service
 

@@ -515,6 +515,12 @@ func TestNewTrayManager_DockerFields(t *testing.T) {
 	if manager.systemMemory != nil {
 		t.Error("systemMemory should be nil before Initialize")
 	}
+	if manager.systemTemp != nil {
+		t.Error("systemTemp should be nil before Initialize")
+	}
+	if manager.systemGPU != nil {
+		t.Error("systemGPU should be nil before Initialize")
+	}
 }
 
 func TestTrayConfig_Defaults(t *testing.T) {
@@ -598,6 +604,12 @@ func TestSystemFormatting(t *testing.T) {
 		MemoryPercent:    intPtr(32),
 		MemoryUsedBytes:  10 * 1024 * 1024 * 1024,
 		MemoryTotalBytes: 32 * 1024 * 1024 * 1024,
+		MaxCPUTempC:      floatPtr(64.4),
+		MaxGPUTempC:      floatPtr(72.8),
+		MaxSystemTempC:   floatPtr(72.8),
+		GPUs: []system.GPUStats{
+			{Name: "nvidia", TemperatureC: floatPtr(72.8)},
+		},
 	}
 
 	if got := formatSystemCPUMenuTitle(normal); got != "  ⚙️ CPU: 18%" {
@@ -608,6 +620,27 @@ func TestSystemFormatting(t *testing.T) {
 	}
 	if got := formatSystemMemoryMenuTitle(normal); got != "  🧠 Memory: 32% (10.0 GiB / 32.0 GiB)" {
 		t.Errorf("formatSystemMemoryMenuTitle() = %q", got)
+	}
+	if got := formatSystemTempMenuTitle(normal); got != "  🌡️ Temp: CPU 64°C / GPU 73°C / Max 73°C" {
+		t.Errorf("formatSystemTempMenuTitle() = %q", got)
+	}
+	if got := formatSystemGPUMenuTitle(normal.GPUs); got != "  🎮 GPU: nvidia 73°C" {
+		t.Errorf("formatSystemGPUMenuTitle() = %q", got)
+	}
+	richGPU := system.GPUStats{
+		Name:             "NVIDIA RTX",
+		TemperatureC:     floatPtr(84),
+		UtilizationPct:   intPtr(97),
+		MemoryUsedBytes:  uint64Ptr(8 * 1024 * 1024 * 1024),
+		MemoryTotalBytes: uint64Ptr(24 * 1024 * 1024 * 1024),
+		PowerDrawW:       floatPtr(312.5),
+		FanSpeedPct:      intPtr(61),
+		GraphicsClockMHz: intPtr(2520),
+		MemoryClockMHz:   intPtr(10501),
+		PState:           "P2",
+	}
+	if got := formatGPUCompact(richGPU); got != "NVIDIA RTX 84°C 97% 8.0 GiB/24.0 GiB VRAM 312W fan 61% 2520/10501 MHz P2" {
+		t.Errorf("formatGPUCompact() = %q", got)
 	}
 	if got := formatSystemMemoryTitle(32); got != "🧠32%" {
 		t.Errorf("formatSystemMemoryTitle() = %q", got)
@@ -620,6 +653,15 @@ func TestSystemFormatting(t *testing.T) {
 	}
 	if got := formatSystemCPUTitle(87); got != "🔥87%" {
 		t.Errorf("formatSystemCPUTitle() = %q", got)
+	}
+	if got := formatSystemTemperatureTitle(normal); got != "" {
+		t.Errorf("formatSystemTemperatureTitle(normal) = %q", got)
+	}
+
+	hotGPU := normal
+	hotGPU.MaxGPUTempC = floatPtr(84)
+	if got := formatSystemTemperatureTitle(hotGPU); got != "🎮84°C" {
+		t.Errorf("formatSystemTemperatureTitle(hotGPU) = %q", got)
 	}
 }
 
@@ -635,12 +677,26 @@ func TestSystemFormatting_UnknownValues(t *testing.T) {
 	if got := formatSystemMemoryMenuTitle(state); got != "  🧠 Memory: --" {
 		t.Errorf("formatSystemMemoryMenuTitle() = %q", got)
 	}
+	if got := formatSystemTempMenuTitle(state); got != "  🌡️ Temp: --" {
+		t.Errorf("formatSystemTempMenuTitle() = %q", got)
+	}
+	if got := formatSystemGPUMenuTitle(nil); got != "  🎮 GPU: --" {
+		t.Errorf("formatSystemGPUMenuTitle() = %q", got)
+	}
 	if got := formatSystemTooltip(state); got != "" {
 		t.Errorf("formatSystemTooltip() = %q", got)
 	}
 }
 
 func intPtr(v int) *int {
+	return &v
+}
+
+func floatPtr(v float64) *float64 {
+	return &v
+}
+
+func uint64Ptr(v uint64) *uint64 {
 	return &v
 }
 

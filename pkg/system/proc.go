@@ -3,6 +3,7 @@ package system
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -24,6 +25,10 @@ func (r osFileReader) ReadFile(name string) ([]byte, error) {
 	return os.ReadFile(name)
 }
 
+type ThermalSampler interface {
+	Sample() ([]SensorReading, []GPUStats, error)
+}
+
 type cpuTimes struct {
 	idle  uint64
 	total uint64
@@ -32,16 +37,27 @@ type cpuTimes struct {
 // ProcSampler reads host metrics from Linux procfs. CPU percentage is reported
 // after the second sample because /proc/stat exposes cumulative counters.
 type ProcSampler struct {
-	reader fileReader
-	prev   *cpuTimes
+	reader  fileReader
+	thermal ThermalSampler
+	prev    *cpuTimes
 }
 
 func NewProcSampler() *ProcSampler {
-	return NewProcSamplerWithReader(osFileReader{})
+	return NewProcSamplerWithThermal(osFileReader{}, NewDefaultThermalSampler())
+}
+
+// NewProcSamplerWithConfig builds the default sampler with the GPU thermal
+// guard configured. A disabled config behaves like NewProcSampler.
+func NewProcSamplerWithConfig(cfg GovernorConfig) *ProcSampler {
+	return NewProcSamplerWithThermal(osFileReader{}, NewDefaultThermalSamplerWithConfig(cfg))
 }
 
 func NewProcSamplerWithReader(reader fileReader) *ProcSampler {
 	return &ProcSampler{reader: reader}
+}
+
+func NewProcSamplerWithThermal(reader fileReader, thermal ThermalSampler) *ProcSampler {
+	return &ProcSampler{reader: reader, thermal: thermal}
 }
 
 func (s *ProcSampler) Sample() (State, error) {
@@ -77,7 +93,27 @@ func (s *ProcSampler) Sample() (State, error) {
 	}
 	s.prev = &current
 
+	if s.thermal != nil {
+		sensors, gpus, err := s.thermal.Sample()
+		if err == nil {
+			state.Sensors = sensors
+			state.GPUs = gpus
+			state.MaxCPUTempC = maxCPUTemp(sensors)
+			state.MaxGPUTempC = maxGPUTemp(sensors, gpus)
+			state.MaxSystemTempC = maxSystemTemp(sensors)
+		}
+	}
+
 	return state, nil
+}
+
+// Close releases the underlying thermal sampler if it holds resources (e.g. the
+// NVIDIA sampler's NVML session and any thermal-guard clamps).
+func (s *ProcSampler) Close() error {
+	if closer, ok := s.thermal.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }
 
 func parseMemInfo(data string) (usedBytes, totalBytes uint64, percent int, err error) {
