@@ -28,6 +28,7 @@ var (
 	disableRazer    bool
 	disableHyperX   bool
 	disableSystem   bool
+	gpuGuardConfig  system.GovernorConfig
 )
 
 func main() {
@@ -37,7 +38,10 @@ func main() {
 	flag.BoolVar(&disableRazer, "disable-razer", false, "Disable Razer device monitoring")
 	flag.BoolVar(&disableHyperX, "disable-hyperx", false, "Disable HyperX Cloud Alpha Wireless monitoring")
 	flag.BoolVar(&disableSystem, "disable-system", false, "Disable CPU and memory monitoring")
+	gpuThermalGuard := flag.Bool("gpu-thermal-guard", false, "Auto-reduce NVIDIA GPU power limit above a temperature threshold (needs root)")
 	flag.Parse()
+
+	gpuGuardConfig = system.DefaultGovernorConfig(*gpuThermalGuard)
 
 	if *showVersion {
 		fmt.Printf("goarctis version %s\n", version.Version)
@@ -111,7 +115,7 @@ func onReady() {
 	dockerMonitor.Start()
 
 	if !disableSystem {
-		systemMonitor = system.NewMonitor(system.DefaultPollInterval)
+		systemMonitor = system.NewMonitorWithConfig(system.DefaultPollInterval, gpuGuardConfig)
 		systemMonitor.SetOnChange(func(state system.State) {
 			trayManager.UpdateSystemState(state)
 		})

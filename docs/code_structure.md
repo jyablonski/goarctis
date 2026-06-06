@@ -103,7 +103,10 @@ goarctis/
 ### `pkg/system/` - Host Resource Monitoring
 
 - **proc.go**: Reads `/proc/stat` and `/proc/meminfo` for CPU and memory samples
-- **monitor.go**: Tracks current CPU, recent CPU peak, spike hold state, and memory utilization
+- **hwmon.go**: Reads `/sys/class/hwmon` temperature sensors and derives CPU/GPU/system max temperatures
+- **nvidia.go**: Optionally reads richer NVIDIA GPU metrics through NVML when an NVIDIA GPU is detected
+- **thermal.go**: Combines hwmon and optional NVIDIA samples into one thermal snapshot
+- **monitor.go**: Tracks current CPU, recent CPU peak, spike hold state, memory utilization, temperatures, and notification thresholds
 
 ### `pkg/ui/` - User Interface
 

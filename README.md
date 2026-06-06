@@ -6,11 +6,11 @@
   <img width="128" height="128" alt="goarctis logo" src="assets/goarctis.svg" />
 </p>
 
-A Linux system tray application for monitoring wireless peripheral battery levels, Docker containers, and host CPU/memory utilization.
+A Linux system tray application for monitoring wireless peripheral battery levels, Docker containers, and host CPU/memory/temperature utilization.
 
 ## What It Does
 
-`goarctis` sits in the system tray and shows wireless peripheral battery state, Docker container counts, and host CPU/memory utilization.
+`goarctis` sits in the system tray and shows wireless peripheral battery state, Docker container counts, and host CPU/memory/temperature utilization.
 
 Supported sources:
 
@@ -19,6 +19,8 @@ Supported sources:
 - Razer wireless devices through OpenRazer, with a tray warning when OpenRazer stops reporting battery data
 - Docker containers through the Docker CLI
 - CPU and memory through Linux procfs
+- Temperature sensors through Linux hwmon sysfs
+- Optional NVIDIA GPU utilization, VRAM, power, fan, clock, and temperature data through NVML when an NVIDIA GPU and driver are detected
 
 <img width="320" height="660" alt="goarctis system tray" src="assets/tray-screenshot.png" />
 
@@ -68,17 +70,20 @@ sudo pacman -S libayatana-appindicator gtk3 pkgconf
 - **Razer devices:** [OpenRazer](https://openrazer.github.io/) daemon installed and running for battery percentages. If a Razer HID device is present but OpenRazer is unavailable or not reporting battery data, goarctis shows a tray warning instead.
 - **Docker monitoring:** Docker CLI available in `PATH`
 - **CPU/memory monitoring:** Linux `/proc` mounted normally
+- **Temperature monitoring:** Linux `/sys/class/hwmon` mounted normally. Sensor labels come from the kernel/driver and can vary by machine.
+- **NVIDIA GPU monitoring:** optional. If `libnvidia-ml.so` and at least one accessible NVIDIA GPU are present, goarctis shows richer GPU metrics. Without them, system monitoring continues with hwmon/procfs only.
 
 ## Usage
 
-| Flag                 | Description                                          | Example                       |
-| -------------------- | ---------------------------------------------------- | ----------------------------- |
-| `--version`          | Print version and exit                               | `goarctis --version`          |
-| `--self-update`      | Update to the latest release and restart the service | `goarctis --self-update`      |
-| `--disable-gamebuds` | Skip GameBuds monitoring                             | `goarctis --disable-gamebuds` |
-| `--disable-razer`    | Skip Razer device monitoring                         | `goarctis --disable-razer`    |
-| `--disable-hyperx`   | Skip HyperX Cloud Alpha Wireless monitoring          | `goarctis --disable-hyperx`   |
-| `--disable-system`   | Skip CPU and memory monitoring                       | `goarctis --disable-system`   |
+| Flag                  | Description                                              | Example                             |
+| --------------------- | -------------------------------------------------------- | ----------------------------------- |
+| `--version`           | Print version and exit                                   | `goarctis --version`                |
+| `--self-update`       | Update to the latest release and restart the service     | `goarctis --self-update`            |
+| `--disable-gamebuds`  | Skip GameBuds monitoring                                 | `goarctis --disable-gamebuds`       |
+| `--disable-razer`     | Skip Razer device monitoring                             | `goarctis --disable-razer`          |
+| `--disable-hyperx`    | Skip HyperX Cloud Alpha Wireless monitoring              | `goarctis --disable-hyperx`         |
+| `--disable-system`    | Skip CPU, memory, and temperature monitoring             | `goarctis --disable-system`         |
+| `--gpu-thermal-guard` | Auto-reduce NVIDIA GPU power limit when hot (needs root) | `sudo goarctis --gpu-thermal-guard` |
 
 Disabled sections are completely hidden from the tray dropdown menu.
 
@@ -134,11 +139,6 @@ make build-test     # Build as goarctis-test (avoids conflicts with running inst
 make clean          # Remove build artifacts
 make deps           # Download and tidy dependencies
 ```
-
-## Documentation
-
-- [How goarctis works](docs/how_it_works.md)
-- [Project structure](docs/code_structure.md)
 
 ## License
 
