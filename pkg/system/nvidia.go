@@ -2,6 +2,7 @@ package system
 
 import (
 	"fmt"
+	"log"
 	"sort"
 	"sync"
 
@@ -123,7 +124,9 @@ func (s *NVIDIASampler) initLocked() error {
 func (s *NVIDIASampler) disableLocked() {
 	s.enabled = false
 	if s.initialized {
-		s.lib.Shutdown()
+		if ret := s.lib.Shutdown(); ret != nvml.SUCCESS {
+			log.Printf("nvml shutdown: %s", nvml.ErrorString(ret))
+		}
 		s.initialized = false
 	}
 }
