@@ -149,6 +149,73 @@ func TestMonitor_CPUPeakWindow(t *testing.T) {
 	}
 }
 
+func TestMonitor_HotTemperatureRequiresSustainedReading(t *testing.T) {
+	start := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	first := stateWithMetrics(nil, intPtr(32))
+	first.MaxGPUTempC = floatPtr(82)
+	second := stateWithMetrics(nil, intPtr(32))
+	second.MaxGPUTempC = floatPtr(82)
+	third := stateWithMetrics(nil, intPtr(32))
+	third.MaxGPUTempC = floatPtr(82)
+	sampler := &fakeSystemSampler{states: []State{first, second, third}}
+	m := NewMonitorWithSampler(time.Second, sampler)
+	m.hotTempSustain = 10 * time.Second
+	m.now = func() time.Time { return start }
+
+	var states []State
+	m.SetOnChange(func(state State) {
+		states = append(states, state)
+	})
+
+	m.poll()
+	if m.GetState().HotGPUTempC != nil {
+		t.Fatal("GPU temp should not be marked hot immediately")
+	}
+
+	start = start.Add(9 * time.Second)
+	m.poll()
+	if m.GetState().HotGPUTempC != nil {
+		t.Fatal("GPU temp should not be marked hot before the sustain window")
+	}
+
+	start = start.Add(time.Second)
+	m.poll()
+	state := m.GetState()
+	if state.HotGPUTempC == nil || *state.HotGPUTempC != 82 {
+		t.Fatalf("sustained GPU temp = %v, want 82", state.HotGPUTempC)
+	}
+	if len(states) != 2 {
+		t.Fatalf("callback count = %d, want 2", len(states))
+	}
+	if states[1].HotGPUTempC == nil || *states[1].HotGPUTempC != 82 {
+		t.Fatalf("second notified sustained GPU temp = %v, want 82", states[1].HotGPUTempC)
+	}
+}
+
+func TestMonitor_HotTemperatureSpikeDoesNotSustain(t *testing.T) {
+	start := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	hot := stateWithMetrics(nil, intPtr(32))
+	hot.MaxCPUTempC = floatPtr(84)
+	cool := stateWithMetrics(nil, intPtr(32))
+	cool.MaxCPUTempC = floatPtr(60)
+	hotAgain := stateWithMetrics(nil, intPtr(32))
+	hotAgain.MaxCPUTempC = floatPtr(84)
+	sampler := &fakeSystemSampler{states: []State{hot, cool, hotAgain}}
+	m := NewMonitorWithSampler(time.Second, sampler)
+	m.hotTempSustain = 10 * time.Second
+	m.now = func() time.Time { return start }
+
+	m.poll()
+	start = start.Add(5 * time.Second)
+	m.poll()
+	start = start.Add(10 * time.Second)
+	m.poll()
+
+	if m.GetState().HotCPUTempC != nil {
+		t.Fatal("CPU temp should not sustain across a cool sample")
+	}
+}
+
 func TestMonitor_UnavailableClearsSpikeState(t *testing.T) {
 	start := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
 	sampler := &fakeSystemSampler{
