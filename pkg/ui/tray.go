@@ -14,10 +14,6 @@ import (
 	"github.com/jyablonski/goarctis/pkg/version"
 )
 
-// hotTempThresholdC is the temperature, in Celsius, at or above which a
-// sensor is surfaced in the tray title bar.
-const hotTempThresholdC = 80
-
 type TrayConfig struct {
 	DisableGameBuds bool
 	DisableRazer    bool
@@ -778,12 +774,12 @@ func formatSystemMemoryTitle(percent int) string {
 
 func formatSystemTemperatureTitle(state system.State) string {
 	switch {
-	case state.MaxGPUTempC != nil && *state.MaxGPUTempC >= hotTempThresholdC:
-		return fmt.Sprintf("🎮%s", formatTempC(*state.MaxGPUTempC))
-	case state.MaxCPUTempC != nil && *state.MaxCPUTempC >= hotTempThresholdC:
-		return fmt.Sprintf("🌡️%s", formatTempC(*state.MaxCPUTempC))
-	case state.MaxSystemTempC != nil && *state.MaxSystemTempC >= hotTempThresholdC:
-		return fmt.Sprintf("🌡️%s", formatTempC(*state.MaxSystemTempC))
+	case state.HotGPUTempC != nil:
+		return fmt.Sprintf("🎮%s", formatTempC(*state.HotGPUTempC))
+	case state.HotCPUTempC != nil:
+		return fmt.Sprintf("🌡️%s", formatTempC(*state.HotCPUTempC))
+	case state.HotSystemTempC != nil:
+		return fmt.Sprintf("🌡️%s", formatTempC(*state.HotSystemTempC))
 	default:
 		return ""
 	}

@@ -660,6 +660,10 @@ func TestSystemFormatting(t *testing.T) {
 
 	hotGPU := normal
 	hotGPU.MaxGPUTempC = floatPtr(84)
+	if got := formatSystemTemperatureTitle(hotGPU); got != "" {
+		t.Errorf("formatSystemTemperatureTitle(unsustained hotGPU) = %q", got)
+	}
+	hotGPU.HotGPUTempC = floatPtr(84)
 	if got := formatSystemTemperatureTitle(hotGPU); got != "🎮84°C" {
 		t.Errorf("formatSystemTemperatureTitle(hotGPU) = %q", got)
 	}

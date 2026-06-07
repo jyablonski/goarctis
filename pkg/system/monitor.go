@@ -12,6 +12,8 @@ const (
 	DefaultCPUSpikeThreshold = 80
 	DefaultCPUSpikeHold      = 10 * time.Second
 	DefaultCPUPeakWindow     = 60 * time.Second
+	DefaultHotTempThresholdC = 80
+	DefaultHotTempSustain    = 10 * time.Second
 )
 
 const (
@@ -33,6 +35,9 @@ type State struct {
 	MaxCPUTempC      *float64
 	MaxGPUTempC      *float64
 	MaxSystemTempC   *float64
+	HotCPUTempC      *float64
+	HotGPUTempC      *float64
+	HotSystemTempC   *float64
 }
 
 type GPUStats struct {
@@ -80,6 +85,10 @@ type cpuSample struct {
 	percent int
 }
 
+type hotTempTracker struct {
+	since time.Time
+}
+
 type Monitor struct {
 	mu       sync.RWMutex
 	state    State
@@ -99,6 +108,11 @@ type Monitor struct {
 	cpuSpikeThreshold int
 	cpuSamples        []cpuSample
 	lastSpikeAt       time.Time
+	hotTempThresholdC float64
+	hotTempSustain    time.Duration
+	hotCPUTemp        hotTempTracker
+	hotGPUTemp        hotTempTracker
+	hotSystemTemp     hotTempTracker
 }
 
 func NewMonitor(interval time.Duration) *Monitor {
@@ -120,6 +134,8 @@ func NewMonitorWithSampler(interval time.Duration, sampler Sampler) *Monitor {
 		cpuPeakWindow:     DefaultCPUPeakWindow,
 		cpuSpikeHold:      DefaultCPUSpikeHold,
 		cpuSpikeThreshold: DefaultCPUSpikeThreshold,
+		hotTempThresholdC: DefaultHotTempThresholdC,
+		hotTempSustain:    DefaultHotTempSustain,
 	}
 }
 
@@ -200,6 +216,7 @@ func (m *Monitor) decorateState(state *State) {
 	if !state.Available {
 		m.cpuSamples = nil
 		m.lastSpikeAt = time.Time{}
+		m.resetHotTemps()
 		return
 	}
 
@@ -220,6 +237,35 @@ func (m *Monitor) decorateState(state *State) {
 	if !m.lastSpikeAt.IsZero() && now.Sub(m.lastSpikeAt) <= m.cpuSpikeHold {
 		state.CPUSpiking = true
 	}
+
+	m.decorateHotTemps(state, now)
+}
+
+func (m *Monitor) decorateHotTemps(state *State, now time.Time) {
+	state.HotCPUTempC = m.sustainedHotTemp(&m.hotCPUTemp, state.MaxCPUTempC, now)
+	state.HotGPUTempC = m.sustainedHotTemp(&m.hotGPUTemp, state.MaxGPUTempC, now)
+	state.HotSystemTempC = m.sustainedHotTemp(&m.hotSystemTemp, state.MaxSystemTempC, now)
+}
+
+func (m *Monitor) sustainedHotTemp(tracker *hotTempTracker, temp *float64, now time.Time) *float64 {
+	if temp == nil || *temp < m.hotTempThresholdC {
+		tracker.since = time.Time{}
+		return nil
+	}
+
+	if tracker.since.IsZero() {
+		tracker.since = now
+	}
+	if now.Sub(tracker.since) < m.hotTempSustain {
+		return nil
+	}
+	return temp
+}
+
+func (m *Monitor) resetHotTemps() {
+	m.hotCPUTemp = hotTempTracker{}
+	m.hotGPUTemp = hotTempTracker{}
+	m.hotSystemTemp = hotTempTracker{}
 }
 
 func (m *Monitor) pruneCPUSamples(now time.Time) {
@@ -280,6 +326,15 @@ func (m *Monitor) stateChanged(newState State) bool {
 		return true
 	}
 	if floatPointerChanged(old.MaxSystemTempC, newState.MaxSystemTempC, minTempChange) {
+		return true
+	}
+	if floatPointerChanged(old.HotCPUTempC, newState.HotCPUTempC, minTempChange) {
+		return true
+	}
+	if floatPointerChanged(old.HotGPUTempC, newState.HotGPUTempC, minTempChange) {
+		return true
+	}
+	if floatPointerChanged(old.HotSystemTempC, newState.HotSystemTempC, minTempChange) {
 		return true
 	}
 	if gpuSummariesChanged(old.GPUs, newState.GPUs) {
