@@ -15,6 +15,13 @@ const (
 	ReportWearStatus = 0xB5
 	ReportANCMode    = 0xBD
 	ReportInEarEvent = 0xC6
+
+	// ReportStatus (0xB0) is the consolidated status report the dongle returns
+	// when polled with the 0xB0 command. Layout (after the 0xB0 report byte):
+	//   byte[3] = left wear status, byte[4] = right wear status (see EarbudStatus)
+	//   byte[5] = left battery %,   byte[6] = right battery %
+	//   byte[9] = ANC mode (see ANCMode)
+	ReportStatus = 0xB0
 )
 
 var (
@@ -148,7 +155,11 @@ func (s DeviceState) String() string {
 			ancStr = s.ANCMode.String()
 		}
 
-		return fmt.Sprintf("L:%s | R:%s | ANC:%s", leftStr, rightStr, ancStr)
+		out := fmt.Sprintf("L:%s | R:%s | ANC:%s", leftStr, rightStr, ancStr)
+		if s.DockBattery != nil {
+			out += fmt.Sprintf(" | Case:%d%%", *s.DockBattery)
+		}
+		return out
 	case DeviceTypeRazer:
 		batteryStr := "--"
 		chargingStr := ""
@@ -224,6 +235,9 @@ func (h *Handler) ParseReport(data []byte) error {
 	}
 
 	switch reportID {
+	case ReportStatus:
+		log.Printf("🎧 GameBuds: Parsing status report (0x%02X)", reportID)
+		h.parseStatus(data)
 	case ReportBattery:
 		log.Printf("🎧 GameBuds: Parsing battery report (0x%02X)", reportID)
 		h.parseBattery(data)
@@ -329,6 +343,48 @@ func (h *Handler) parseBattery(data []byte) {
 	log.Printf("🔋 Battery: Left %d%%, Right %d%%", leftBattery, rightBattery)
 }
 
+// parseStatus parses the consolidated 0xB0 status report returned by the
+// dongle. Layout (after the 0xB0 report byte):
+//
+//	byte[3]/byte[4] = left/right wear status (EarbudStatus)
+//	byte[5]/byte[6] = left/right battery %  (0xFF = unknown)
+//	byte[9]         = ANC mode (ANCMode)
+//
+// Carrying ANC here means it populates on the first poll, rather than only when
+// an unsolicited 0xBD change-event arrives.
+func (h *Handler) parseStatus(data []byte) {
+	if len(data) < 7 {
+		return
+	}
+
+	leftStatus := EarbudStatus(data[3])
+	rightStatus := EarbudStatus(data[4])
+	if leftStatus >= StatusInCase && leftStatus <= StatusWorn {
+		h.state.LeftStatus = &leftStatus
+	}
+	if rightStatus >= StatusInCase && rightStatus <= StatusWorn {
+		h.state.RightStatus = &rightStatus
+	}
+
+	if left := int(data[5]); left <= 100 {
+		h.state.LeftBattery = &left
+	}
+	if right := int(data[6]); right <= 100 {
+		h.state.RightBattery = &right
+	}
+
+	if len(data) >= 10 {
+		if anc := ANCMode(data[9]); anc >= ANCOff && anc <= ANCActive {
+			h.state.ANCMode = &anc
+		}
+	}
+
+	h.state.IsConnected = true
+
+	log.Printf("🔋 GameBuds status: Left %d%% (%s), Right %d%% (%s)",
+		int(data[5]), leftStatus, int(data[6]), rightStatus)
+}
+
 func (h *Handler) parseWearStatus(data []byte) {
 	if len(data) < 5 {
 		return
@@ -363,6 +419,24 @@ func (h *Handler) parseInEarEvent(data []byte) {
 		log.Println("👂 Earbud removed from ear")
 	case 0:
 		log.Println("👂 Earbud placed in ear")
+	}
+}
+
+// SetDockBattery updates the charging case battery level. The case is a
+// separate USB device (PID 0x230c) from the dongle, so this is driven by its
+// own poll rather than the dongle's 0xB0 status report. A value of 0xFF (255)
+// or out-of-range reading is treated as unknown and ignored.
+func (h *Handler) SetDockBattery(battery int) {
+	if battery < 0 || battery > 100 {
+		return
+	}
+
+	oldState := h.copyState()
+	h.state.DockBattery = &battery
+	h.state.IsConnected = true
+
+	if h.onChange != nil && !oldState.Equal(h.state) {
+		h.onChange(h.state)
 	}
 }
 

@@ -28,6 +28,7 @@ type TrayManager struct {
 	gameBudsMenu  *systray.MenuItem
 	gameBudsLeft  *systray.MenuItem
 	gameBudsRight *systray.MenuItem
+	gameBudsCase  *systray.MenuItem
 	gameBudsANC   *systray.MenuItem
 	razerMenu     *systray.MenuItem
 	razerBattery  *systray.MenuItem
@@ -91,6 +92,7 @@ func (t *TrayManager) Initialize(cfg TrayConfig) {
 		t.gameBudsMenu = addDisabledHiddenMenuItem("🎧 GameBuds", "SteelSeries Arctis GameBuds")
 		t.gameBudsLeft = addDisabledHiddenMenuItem("  Left: --", "Left earbud battery")
 		t.gameBudsRight = addDisabledHiddenMenuItem("  Right: --", "Right earbud battery")
+		t.gameBudsCase = addDisabledHiddenMenuItem("  Case: --", "Charging case battery")
 		t.gameBudsANC = addDisabledHiddenMenuItem("  ANC: Unknown", "Noise cancellation mode")
 	}
 
@@ -164,7 +166,7 @@ func addDisabledHiddenMenuItem(title, tooltip string) *systray.MenuItem {
 }
 
 func (t *TrayManager) gameBudsItems() []*systray.MenuItem {
-	return []*systray.MenuItem{t.gameBudsMenu, t.gameBudsLeft, t.gameBudsRight, t.gameBudsANC}
+	return []*systray.MenuItem{t.gameBudsMenu, t.gameBudsLeft, t.gameBudsRight, t.gameBudsCase, t.gameBudsANC}
 }
 
 func (t *TrayManager) razerItems() []*systray.MenuItem {
@@ -218,6 +220,16 @@ func (t *TrayManager) updateGameBuds(state protocol.DeviceState) {
 	rightText := formatGameBudsBattery(state.RightBattery, state.RightStatus, "Right")
 	t.gameBudsRight.SetTitle("  " + rightText)
 	t.gameBudsRight.Enable()
+
+	// The charging case is a separate USB device that only reports while
+	// plugged in. Show its line only when we actually have a reading.
+	if state.DockBattery != nil {
+		t.gameBudsCase.SetTitle(fmt.Sprintf("  %s Case: %d%%", getBatteryIcon(*state.DockBattery), *state.DockBattery))
+		t.gameBudsCase.Enable()
+		t.gameBudsCase.Show()
+	} else {
+		t.gameBudsCase.Hide()
+	}
 
 	ancText := "  ANC: Unknown"
 	if state.ANCMode != nil {
@@ -598,7 +610,8 @@ func joinNames(names []string, max int) string {
 
 func isVisibleGameBudsState(state protocol.DeviceState) bool {
 	return state.IsConnected && (state.LeftBattery != nil || state.RightBattery != nil ||
-		state.LeftStatus != nil || state.RightStatus != nil || state.ANCMode != nil)
+		state.LeftStatus != nil || state.RightStatus != nil || state.ANCMode != nil ||
+		state.DockBattery != nil)
 }
 
 func gameBudsTrayBattery(state protocol.DeviceState) int {
