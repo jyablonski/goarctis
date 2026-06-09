@@ -88,6 +88,153 @@ func TestParseBattery(t *testing.T) {
 	}
 }
 
+func TestParseStatus(t *testing.T) {
+	// Real frame captured from the dongle: b0 01 01 03 03 4e 50 ...
+	// byte[3]/byte[4] = wear status, byte[5]/byte[6] = left/right battery.
+	realFrame := []byte{
+		0xB0, 0x01, 0x01, 0x03, 0x03, 78, 80, 0x0a, 0x03, 0x00, 0x00, 0x1e,
+	}
+
+	tests := []struct {
+		name           string
+		data           []byte
+		wantLeft       int
+		wantRight      int
+		wantLeftStatus EarbudStatus
+		wantANC        *ANCMode
+		wantSet        bool
+	}{
+		{
+			name:           "real captured frame",
+			data:           realFrame,
+			wantLeft:       78,
+			wantRight:      80,
+			wantLeftStatus: StatusWorn,
+			wantANC:        func() *ANCMode { m := ANCOff; return &m }(), // byte[9] = 0x00
+			wantSet:        true,
+		},
+		{
+			name:      "out of case low battery",
+			data:      []byte{0xB0, 0x00, 0x00, 0x02, 0x02, 5, 9, 0x00},
+			wantLeft:  5,
+			wantRight: 9,
+			wantSet:   true,
+		},
+		{
+			name:      "active noise cancellation from byte 9",
+			data:      []byte{0xB0, 0x01, 0x01, 0x03, 0x03, 80, 82, 0x0a, 0x03, 0x02},
+			wantLeft:  80,
+			wantRight: 82,
+			wantANC:   func() *ANCMode { m := ANCActive; return &m }(),
+			wantSet:   true,
+		},
+		{
+			name:      "out-of-range ANC byte leaves ANC unset",
+			data:      []byte{0xB0, 0x01, 0x01, 0x03, 0x03, 80, 82, 0x0a, 0x03, 0xFF},
+			wantLeft:  80,
+			wantRight: 82,
+			wantANC:   nil, // 0xFF is not a valid ANCMode, so it must be ignored
+			wantSet:   true,
+		},
+		{
+			name:    "short frame ignored",
+			data:    []byte{0xB0, 0x01, 0x01},
+			wantSet: false,
+		},
+		{
+			name:    "0xFF battery treated as unknown",
+			data:    []byte{0xB0, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00},
+			wantSet: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := NewHandler()
+			h.state = DeviceState{}
+
+			h.parseStatus(tt.data)
+
+			if !tt.wantSet {
+				if h.state.LeftBattery != nil || h.state.RightBattery != nil {
+					t.Fatalf("expected battery to stay unset, got L=%v R=%v",
+						h.state.LeftBattery, h.state.RightBattery)
+				}
+				return
+			}
+
+			if h.state.LeftBattery == nil || *h.state.LeftBattery != tt.wantLeft {
+				t.Errorf("Left battery = %v, want %d", h.state.LeftBattery, tt.wantLeft)
+			}
+			if h.state.RightBattery == nil || *h.state.RightBattery != tt.wantRight {
+				t.Errorf("Right battery = %v, want %d", h.state.RightBattery, tt.wantRight)
+			}
+			if tt.wantLeftStatus != 0 {
+				if h.state.LeftStatus == nil || *h.state.LeftStatus != tt.wantLeftStatus {
+					t.Errorf("Left status = %v, want %v", h.state.LeftStatus, tt.wantLeftStatus)
+				}
+			}
+			switch {
+			case tt.wantANC == nil && h.state.ANCMode != nil:
+				t.Errorf("ANC mode = %v, want nil", *h.state.ANCMode)
+			case tt.wantANC != nil && (h.state.ANCMode == nil || *h.state.ANCMode != *tt.wantANC):
+				t.Errorf("ANC mode = %v, want %v", h.state.ANCMode, *tt.wantANC)
+			}
+		})
+	}
+}
+
+func TestParseReport_StatusRoutesToParser(t *testing.T) {
+	h := NewHandler()
+	h.state = DeviceState{}
+
+	if err := h.ParseReport([]byte{0xB0, 0x01, 0x01, 0x03, 0x03, 78, 80}); err != nil {
+		t.Fatalf("ParseReport(0xB0) error = %v", err)
+	}
+	if h.state.LeftBattery == nil || *h.state.LeftBattery != 78 {
+		t.Errorf("Left battery = %v, want 78", h.state.LeftBattery)
+	}
+	if h.state.RightBattery == nil || *h.state.RightBattery != 80 {
+		t.Errorf("Right battery = %v, want 80", h.state.RightBattery)
+	}
+}
+
+func TestSetDockBattery(t *testing.T) {
+	t.Run("valid reading sets dock battery and fires callback", func(t *testing.T) {
+		h := NewHandler()
+		var got *DeviceState
+		h.SetOnChange(func(s DeviceState) { got = &s })
+
+		h.SetDockBattery(73)
+
+		if h.state.DockBattery == nil || *h.state.DockBattery != 73 {
+			t.Fatalf("DockBattery = %v, want 73", h.state.DockBattery)
+		}
+		if got == nil || got.DockBattery == nil || *got.DockBattery != 73 {
+			t.Fatalf("callback DockBattery = %v, want 73", got)
+		}
+	})
+
+	t.Run("unchanged value does not fire callback", func(t *testing.T) {
+		h := NewHandler()
+		h.SetDockBattery(73)
+		fired := false
+		h.SetOnChange(func(DeviceState) { fired = true })
+		h.SetDockBattery(73)
+		if fired {
+			t.Error("callback fired for unchanged dock battery")
+		}
+	})
+
+	t.Run("out of range reading is ignored", func(t *testing.T) {
+		h := NewHandler()
+		h.SetDockBattery(255)
+		if h.state.DockBattery != nil {
+			t.Fatalf("DockBattery = %v, want nil", h.state.DockBattery)
+		}
+	})
+}
+
 func TestParseWearStatus(t *testing.T) {
 	tests := []struct {
 		name          string

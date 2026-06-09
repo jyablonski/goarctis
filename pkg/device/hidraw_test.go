@@ -286,3 +286,100 @@ func TestStart_NoDevices(t *testing.T) {
 		t.Error("Start should return error when no devices")
 	}
 }
+
+func TestFindCaseDevice_Found(t *testing.T) {
+	mockFS := &MockFileSystem{
+		dirContents: map[string][]os.FileInfo{
+			"/sys/class/hidraw": {MockFileInfo{name: "hidraw13"}},
+		},
+		files: map[string][]byte{
+			"/sys/class/hidraw/hidraw13/device/uevent":              []byte("HID_ID=0003:00001038:0000230C\n"),
+			"/sys/class/hidraw/hidraw13/device/../bInterfaceNumber": []byte("00\n"),
+			"/dev/hidraw13": {},
+		},
+	}
+
+	manager := NewHIDRawManagerWithFS(mockFS)
+	manager.findCaseDevice()
+
+	if manager.caseDevice == nil {
+		t.Fatal("expected caseDevice to be set when the case is plugged in")
+	}
+	if manager.caseDevice.path != "/dev/hidraw13" {
+		t.Errorf("caseDevice.path = %q, want /dev/hidraw13", manager.caseDevice.path)
+	}
+}
+
+func TestFindCaseDevice_SkipsNonControlInterface(t *testing.T) {
+	// The case exposes interfaces 00/01/02; only 00 (FFC0) answers the battery
+	// query, so a case present with only other interfaces must not be selected.
+	mockFS := &MockFileSystem{
+		dirContents: map[string][]os.FileInfo{
+			"/sys/class/hidraw": {MockFileInfo{name: "hidraw14"}},
+		},
+		files: map[string][]byte{
+			"/sys/class/hidraw/hidraw14/device/uevent":              []byte("HID_ID=0003:00001038:0000230C\n"),
+			"/sys/class/hidraw/hidraw14/device/../bInterfaceNumber": []byte("01\n"),
+			"/dev/hidraw14": {},
+		},
+	}
+
+	manager := NewHIDRawManagerWithFS(mockFS)
+	manager.findCaseDevice()
+
+	if manager.caseDevice != nil {
+		t.Errorf("expected caseDevice nil for non-control interface, got %q", manager.caseDevice.path)
+	}
+}
+
+func TestFindCaseDevice_NotPresent(t *testing.T) {
+	// Only the dongle is plugged in; case battery is simply unavailable.
+	mockFS := &MockFileSystem{
+		dirContents: map[string][]os.FileInfo{
+			"/sys/class/hidraw": {MockFileInfo{name: "hidraw4"}},
+		},
+		files: map[string][]byte{
+			"/sys/class/hidraw/hidraw4/device/uevent":              []byte("HID_ID=0003:00001038:0000230A\n"),
+			"/sys/class/hidraw/hidraw4/device/../bInterfaceNumber": []byte("03\n"),
+			"/dev/hidraw4": {},
+		},
+	}
+
+	manager := NewHIDRawManagerWithFS(mockFS)
+	manager.findCaseDevice()
+
+	if manager.caseDevice != nil {
+		t.Errorf("expected caseDevice nil when the case is absent, got %q", manager.caseDevice.path)
+	}
+}
+
+func TestFindDevices_DiscoversDongleAndCase(t *testing.T) {
+	mockFS := &MockFileSystem{
+		dirContents: map[string][]os.FileInfo{
+			"/sys/class/hidraw": {
+				MockFileInfo{name: "hidraw4"},
+				MockFileInfo{name: "hidraw13"},
+			},
+		},
+		files: map[string][]byte{
+			"/sys/class/hidraw/hidraw4/device/uevent":               []byte("HID_ID=0003:00001038:0000230A\n"),
+			"/sys/class/hidraw/hidraw4/device/../bInterfaceNumber":  []byte("03\n"),
+			"/sys/class/hidraw/hidraw13/device/uevent":              []byte("HID_ID=0003:00001038:0000230C\n"),
+			"/sys/class/hidraw/hidraw13/device/../bInterfaceNumber": []byte("00\n"),
+			"/dev/hidraw4":  {},
+			"/dev/hidraw13": {},
+		},
+	}
+
+	manager := NewHIDRawManagerWithFS(mockFS)
+	if err := manager.FindDevices(); err != nil {
+		t.Fatalf("FindDevices failed: %v", err)
+	}
+
+	if len(manager.devices) != 1 {
+		t.Errorf("expected 1 dongle interface, got %d", len(manager.devices))
+	}
+	if manager.caseDevice == nil || manager.caseDevice.path != "/dev/hidraw13" {
+		t.Errorf("expected case discovered at /dev/hidraw13, got %+v", manager.caseDevice)
+	}
+}

@@ -115,6 +115,57 @@ func TestDeviceState_Equal_ComparesPointerValues(t *testing.T) {
 	}
 }
 
+func TestDeviceState_String_GameBuds(t *testing.T) {
+	left, right, dock := 80, 82, 88
+	leftStatus, rightStatus := StatusWorn, StatusWorn
+	anc := ANCActive
+
+	tests := []struct {
+		name  string
+		state DeviceState
+		want  string
+	}{
+		{
+			name: "full state with case",
+			state: DeviceState{
+				DeviceType:   DeviceTypeSteelSeriesGameBuds,
+				LeftBattery:  &left,
+				RightBattery: &right,
+				LeftStatus:   &leftStatus,
+				RightStatus:  &rightStatus,
+				ANCMode:      &anc,
+				DockBattery:  &dock,
+			},
+			want: "L:80% (Wearing) | R:82% (Wearing) | ANC:Active Noise Cancellation | Case:88%",
+		},
+		{
+			name: "case omitted when unplugged",
+			state: DeviceState{
+				DeviceType:   DeviceTypeSteelSeriesGameBuds,
+				LeftBattery:  &left,
+				RightBattery: &right,
+				LeftStatus:   &leftStatus,
+				RightStatus:  &rightStatus,
+				ANCMode:      &anc,
+			},
+			want: "L:80% (Wearing) | R:82% (Wearing) | ANC:Active Noise Cancellation",
+		},
+		{
+			name:  "empty state",
+			state: DeviceState{DeviceType: DeviceTypeSteelSeriesGameBuds},
+			want:  "L:-- | R:-- | ANC:Unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.state.String(); got != tt.want {
+				t.Errorf("String() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDeviceState_String_Razer(t *testing.T) {
 	battery := 65
 	isCharging := true

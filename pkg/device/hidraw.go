@@ -6,9 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
-	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/jyablonski/goarctis/pkg/protocol"
 )
@@ -17,11 +15,22 @@ const (
 	VendorID  = 0x1038
 	ProductID = 0x230a
 
-	// HID ioctl constants (from linux/hidraw.h)
-	_HIDIOCGRDESCSIZE = 0x01
-	_HIDIOCGRDESC     = 0x02
-	_HIDIOCGRAWINFO   = 0x03
-	_HIDIOCGFEATURE   = 0x07
+	// CaseProductID is the charging case, a separate USB device that only
+	// enumerates while it is plugged into USB. Its FFC0 control interface
+	// (interface 00) answers a 0xB7 query with the case battery in byte 3.
+	CaseProductID        = 0x230c
+	caseControlInterface = "00"
+
+	// statusQueryCommand is written as a 64-byte OUTPUT report on the FFC0
+	// control interface (interface 03). The dongle replies with a 0xB0 INPUT
+	// report containing battery and wear state, which the read goroutine parses.
+	// The device uses unnumbered reports, so byte 0 is the report number (0) and
+	// the command goes in byte 1.
+	statusQueryCommand = 0xB0
+
+	// caseBatteryCommand queries the charging case; byte 3 of the reply is the
+	// case battery percentage.
+	caseBatteryCommand = 0xB7
 
 	gameBudsPollInterval = 5 * time.Second
 )
@@ -31,20 +40,8 @@ var (
 	ErrNoHIDRawDevicesOpened   = errors.New("could not open any hidraw devices")
 	ErrNoDevicesToMonitor      = errors.New("no devices to monitor")
 	ErrFileDescriptorMissing   = errors.New("file descriptor not available")
-	ErrHIDRawIOCTLFailed       = errors.New("hidraw ioctl failed")
+	ErrStatusQueryFailed       = errors.New("status query write failed")
 )
-
-func _IOC(dir, typ, nr, size uint) uint {
-	return (dir << 30) | (typ << 8) | nr | (size << 16)
-}
-
-func _IOWR(typ, nr, size uint) uint {
-	return _IOC(3, typ, nr, size)
-}
-
-func HIDIOCGFEATURE(length uint) uint {
-	return _IOWR('H', _HIDIOCGFEATURE, length)
-}
 
 type FileSystem interface {
 	ReadDir(dirname string) ([]os.FileInfo, error)
@@ -88,6 +85,7 @@ type deviceInfo struct {
 
 type HIDRawManager struct {
 	devices    []deviceInfo
+	caseDevice *deviceInfo
 	protocol   *protocol.Handler
 	stopChan   chan struct{}
 	fs         FileSystem
@@ -176,7 +174,38 @@ func (m *HIDRawManager) FindDevices() error {
 	}
 
 	log.Printf("Successfully opened %d HID interfaces", len(m.devices))
+
+	m.findCaseDevice()
+
 	return nil
+}
+
+// findCaseDevice locates and opens the charging case's control interface, if
+// the case is currently plugged into USB. The case is optional: failure to find
+// it is not an error (it simply means case battery is unavailable).
+func (m *HIDRawManager) findCaseDevice() {
+	matches, err := findHIDRawDevices(m.fs, VendorID, CaseProductID)
+	if err != nil {
+		log.Printf("🎧 GameBuds: case lookup failed: %v", err)
+		return
+	}
+
+	for _, match := range matches {
+		if match.InterfaceNumber != caseControlInterface {
+			continue
+		}
+
+		f, err := m.fs.OpenFile(match.Path, os.O_RDWR, 0)
+		if err != nil {
+			log.Printf("🎧 GameBuds: could not open case control interface %s: %v", match.Path, err)
+			return
+		}
+
+		fd, _ := f.(*os.File)
+		m.caseDevice = &deviceInfo{file: f, path: match.Path, fd: fd}
+		log.Printf("🎧 GameBuds: found charging case control interface at %s", match.Path)
+		return
+	}
 }
 
 func (m *HIDRawManager) GetID() string {
@@ -209,9 +238,6 @@ func (m *HIDRawManager) Start() error {
 
 	log.Printf("Monitoring %d HID interfaces...", len(m.devices))
 
-	// This might be required on some systems (like Arch Linux) to start receiving reports
-	m.requestInitialFeatureReports()
-
 	initialState := m.GetState()
 	log.Printf("🎧 GameBuds: Sending initial state update (DeviceID: %s, DeviceType: %s, IsConnected: %v)",
 		initialState.DeviceID, initialState.DeviceType, initialState.IsConnected)
@@ -223,8 +249,6 @@ func (m *HIDRawManager) Start() error {
 			m.onChange(state)
 		}
 	}
-
-	m.startPollingGoroutine()
 
 	for _, deviceInfo := range m.devices {
 		info := deviceInfo
@@ -278,6 +302,10 @@ func (m *HIDRawManager) Start() error {
 		}()
 	}
 
+	// Start polling after the read goroutines so their replies are picked up.
+	m.startPollingGoroutine()
+	m.startCasePolling()
+
 	return nil
 }
 
@@ -307,89 +335,58 @@ func (m *HIDRawManager) Stop() error {
 	return nil
 }
 
-func (m *HIDRawManager) requestFeatureReport(fd *os.File, reportID byte) ([]byte, error) {
+// controlDevice returns the first writable interface (the FFC0 control channel
+// on interface 03), which is where status queries are written and from which
+// the dongle's status reports are read.
+func (m *HIDRawManager) controlDevice() *deviceInfo {
+	for i := range m.devices {
+		if m.devices[i].fd != nil {
+			return &m.devices[i]
+		}
+	}
+	return nil
+}
+
+// writeStatusQuery writes the 0xB0 status command to the control interface. The
+// dongle replies with a 0xB0 input report that the read goroutine parses. The
+// device occasionally NAKs a write (ETIMEDOUT/EAGAIN), so retry a few times.
+func (m *HIDRawManager) writeStatusQuery(fd *os.File) error {
 	if fd == nil {
-		return nil, ErrFileDescriptorMissing
+		return ErrFileDescriptorMissing
 	}
 
 	buf := make([]byte, 64)
-	buf[0] = reportID
+	buf[0] = 0x00 // report number (device uses unnumbered reports)
+	buf[1] = statusQueryCommand
 
-	ioctl := HIDIOCGFEATURE(uint(len(buf)))
-	_, _, errno := syscall.Syscall(
-		syscall.SYS_IOCTL,
-		uintptr(fd.Fd()),
-		uintptr(ioctl),
-		uintptr(unsafe.Pointer(&buf[0])),
-	)
-
-	if errno != 0 {
-		return nil, fmt.Errorf("%w: %v", ErrHIDRawIOCTLFailed, errno)
-	}
-
-	return buf, nil
-}
-
-// This may be required to "wake up" the device on some systems
-func (m *HIDRawManager) requestInitialFeatureReports() {
-	for _, devInfo := range m.devices {
-		if devInfo.fd != nil {
-			log.Printf("🎧 GameBuds: Attempting to request initial feature reports from device %d", devInfo.number)
-
-			// Note: These might be INPUT reports, not FEATURE reports
-			// Feature reports return all zeros, suggesting the device uses input reports instead
-			reportIDs := []byte{
-				0xB7, // Battery report
-				0xB5, // Wear status report
-				0xBD, // ANC mode report
-			}
-
-			for _, reportID := range reportIDs {
-				data, err := m.requestFeatureReport(devInfo.fd, reportID)
-				if err != nil {
-					log.Printf("🎧 GameBuds: Feature report request for 0x%02X failed: %v", reportID, err)
-				} else {
-					allZeros := true
-					for _, b := range data {
-						if b != 0 {
-							allZeros = false
-							break
-						}
-					}
-					if allZeros {
-						log.Printf("🎧 GameBuds: Feature report 0x%02X returned all zeros - device may not support feature reports for this ID", reportID)
-					} else {
-						log.Printf("🎧 GameBuds: Received feature report 0x%02X: %x", reportID, data)
-						if len(data) > 0 && data[0] == reportID {
-							m.parseReport(data)
-						}
-					}
-				}
-			}
-
-			log.Printf("🎧 GameBuds: Note: Device appears to use INPUT reports (unsolicited), not FEATURE reports")
-			log.Printf("🎧 GameBuds: Polling will continue but may not return data - waiting for device to send input reports")
-			break
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		if _, err := fd.Write(buf); err != nil {
+			lastErr = err
+			time.Sleep(150 * time.Millisecond)
+			continue
 		}
+		return nil
 	}
+	return fmt.Errorf("%w: %v", ErrStatusQueryFailed, lastErr)
 }
 
-// This implements active polling similar to how Razer devices work
+// startPollingGoroutine periodically asks the dongle for a status report by
+// writing the 0xB0 command to the control interface. The reply arrives as an
+// input report and is handled by the read goroutine started in Start.
 func (m *HIDRawManager) startPollingGoroutine() {
-	var pollDevice *deviceInfo
-	for i := range m.devices {
-		if m.devices[i].fd != nil {
-			pollDevice = &m.devices[i]
-			break
-		}
-	}
-
+	pollDevice := m.controlDevice()
 	if pollDevice == nil {
-		log.Printf("🎧 GameBuds: No writable device found for polling - will only listen for unsolicited reports")
+		log.Printf("🎧 GameBuds: No writable device found - cannot poll for status")
 		return
 	}
 
-	log.Printf("🎧 GameBuds: Starting active polling on device %d (%s) every %v", pollDevice.number, pollDevice.path, gameBudsPollInterval)
+	log.Printf("🎧 GameBuds: Polling status on device %d (%s) every %v", pollDevice.number, pollDevice.path, gameBudsPollInterval)
+
+	// Send an immediate query so the tray populates without waiting a full tick.
+	if err := m.writeStatusQuery(pollDevice.fd); err != nil {
+		log.Printf("🎧 GameBuds: Initial status query failed: %v", err)
+	}
 
 	go func() {
 		ticker := time.NewTicker(gameBudsPollInterval)
@@ -401,60 +398,80 @@ func (m *HIDRawManager) startPollingGoroutine() {
 				log.Printf("🎧 GameBuds: Stopping polling goroutine")
 				return
 			case <-ticker.C:
-				// Note: If device returns all zeros, it doesn't support feature reports
-				data, err := m.requestFeatureReport(pollDevice.fd, 0xB7)
-				if err != nil {
-					if time.Now().Unix()%30 == 0 {
-						log.Printf("🎧 GameBuds: Polling feature report 0xB7 failed: %v", err)
-					}
-				} else if len(data) > 0 && data[0] == 0xB7 {
-					allZeros := true
-					for _, b := range data {
-						if b != 0 {
-							allZeros = false
-							break
-						}
-					}
-					if !allZeros {
-						log.Printf("🎧 GameBuds: Polled battery report: %x", data)
-						m.parseReport(data)
-					}
-				}
-
-				if time.Now().Unix()%3 == 0 {
-					data, err := m.requestFeatureReport(pollDevice.fd, 0xB5)
-					if err == nil && len(data) > 0 && data[0] == 0xB5 {
-						allZeros := true
-						for _, b := range data {
-							if b != 0 {
-								allZeros = false
-								break
-							}
-						}
-						if !allZeros {
-							log.Printf("🎧 GameBuds: Polled wear status report: %x", data)
-							m.parseReport(data)
-						}
-					}
-
-					data, err = m.requestFeatureReport(pollDevice.fd, 0xBD)
-					if err == nil && len(data) > 0 && data[0] == 0xBD {
-						allZeros := true
-						for _, b := range data {
-							if b != 0 {
-								allZeros = false
-								break
-							}
-						}
-						if !allZeros {
-							log.Printf("🎧 GameBuds: Polled ANC mode report: %x", data)
-							m.parseReport(data)
-						}
-					}
+				if err := m.writeStatusQuery(pollDevice.fd); err != nil {
+					log.Printf("🎧 GameBuds: Status query failed: %v", err)
 				}
 			}
 		}
 	}()
+}
+
+// startCasePolling polls the charging case (when plugged in) for its battery
+// level. Unlike the dongle, the case answers synchronously: we write the 0xB7
+// query and read the reply on the same goroutine, since the case interface does
+// not emit unsolicited reports.
+func (m *HIDRawManager) startCasePolling() {
+	if m.caseDevice == nil || m.caseDevice.fd == nil {
+		return
+	}
+
+	fd := m.caseDevice.fd
+	log.Printf("🎧 GameBuds: Polling charging case battery on %s every %v", m.caseDevice.path, gameBudsPollInterval)
+
+	m.queryCaseBattery(fd)
+
+	go func() {
+		ticker := time.NewTicker(gameBudsPollInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-m.stopChan:
+				log.Printf("🎧 GameBuds: Stopping case polling goroutine")
+				return
+			case <-ticker.C:
+				m.queryCaseBattery(fd)
+			}
+		}
+	}()
+}
+
+// queryCaseBattery writes the case battery query and reads the reply. The case
+// reply is b7 00 00 <battery> ..., so byte 3 carries the percentage.
+func (m *HIDRawManager) queryCaseBattery(fd *os.File) {
+	buf := make([]byte, 64)
+	buf[0] = 0x00
+	buf[1] = caseBatteryCommand
+
+	var writeErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		if _, err := fd.Write(buf); err != nil {
+			writeErr = err
+			time.Sleep(150 * time.Millisecond)
+			continue
+		}
+		writeErr = nil
+		break
+	}
+	if writeErr != nil {
+		log.Printf("🎧 GameBuds: case battery query failed: %v", writeErr)
+		return
+	}
+
+	reply := make([]byte, 64)
+	n, err := fd.Read(reply)
+	if err != nil {
+		if err != io.EOF {
+			log.Printf("🎧 GameBuds: case battery read failed: %v", err)
+		}
+		return
+	}
+
+	if n >= 4 && reply[0] == caseBatteryCommand {
+		battery := int(reply[3])
+		log.Printf("🔋 GameBuds case battery: %d%%", battery)
+		m.protocol.SetDockBattery(battery)
+	}
 }
 
 func (m *HIDRawManager) Close() error {
@@ -465,6 +482,11 @@ func (m *HIDRawManager) Close() error {
 	for _, devInfo := range m.devices {
 		if err := devInfo.file.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("close %s: %w", devInfo.path, err))
+		}
+	}
+	if m.caseDevice != nil && m.caseDevice.file != nil {
+		if err := m.caseDevice.file.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close %s: %w", m.caseDevice.path, err))
 		}
 	}
 	return errors.Join(errs...)
