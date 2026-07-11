@@ -356,6 +356,79 @@ func TestBuildTrayTitleParts_StableOrderAndSkipsWarnings(t *testing.T) {
 	}
 }
 
+func TestBuildTrayTitleParts_RecoveryRemovesSystemAlerts(t *testing.T) {
+	cpu := 100
+	memory := 38
+	hotCPU := 91.0
+	alerting := system.State{
+		Available:      true,
+		CPUPercent:     &cpu,
+		CPUSpiking:     true,
+		MemoryPercent:  &memory,
+		HotCPUTempC:    &hotCPU,
+		HotSystemTempC: &hotCPU,
+	}
+
+	if got := buildTrayTitleParts(nil, docker.DockerState{}, alerting); !reflect.DeepEqual(got, []string{"🌡️91°C", "🔥100%", "🧠38%"}) {
+		t.Fatalf("alerting title parts = %#v", got)
+	}
+
+	cpu = 15
+	recovered := alerting
+	recovered.CPUSpiking = false
+	recovered.HotCPUTempC = nil
+	recovered.HotSystemTempC = nil
+	if got := buildTrayTitleParts(nil, docker.DockerState{}, recovered); !reflect.DeepEqual(got, []string{"🧠38%"}) {
+		t.Fatalf("recovered title parts = %#v, want only memory", got)
+	}
+}
+
+func TestTrayManager_RenderTrayIconAppliesRecoveredTitle(t *testing.T) {
+	manager := NewTrayManager()
+	var titles []string
+	manager.setTitle = func(title string) {
+		titles = append(titles, title)
+	}
+	manager.setTooltip = func(string) {}
+
+	battery := 53
+	devices := map[string]protocol.DeviceState{
+		"razer": {
+			DeviceType:  protocol.DeviceTypeRazer,
+			IsConnected: true,
+			Battery:     &battery,
+		},
+	}
+	cpu := 100
+	memory := 38
+	hotCPU := 91.0
+	alerting := system.State{
+		Available:      true,
+		CPUPercent:     &cpu,
+		CPUSpiking:     true,
+		MemoryPercent:  &memory,
+		HotCPUTempC:    &hotCPU,
+		HotSystemTempC: &hotCPU,
+	}
+	manager.renderTrayIcon(traySnapshot{devices: devices, systemState: alerting})
+
+	recoveredCPU := 15
+	recovered := alerting
+	recovered.CPUPercent = &recoveredCPU
+	recovered.CPUSpiking = false
+	recovered.HotCPUTempC = nil
+	recovered.HotSystemTempC = nil
+	manager.renderTrayIcon(traySnapshot{devices: devices, systemState: recovered})
+
+	want := []string{
+		"🖱️53% 🌡️91°C 🔥100% 🧠38%",
+		"🖱️53% 🧠38%",
+	}
+	if !reflect.DeepEqual(titles, want) {
+		t.Fatalf("rendered titles = %#v, want %#v", titles, want)
+	}
+}
+
 func TestBuildTrayTooltipParts(t *testing.T) {
 	hyperxBattery := 79
 	systemCPU := 12

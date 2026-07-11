@@ -216,6 +216,55 @@ func TestMonitor_HotTemperatureSpikeDoesNotSustain(t *testing.T) {
 	}
 }
 
+func TestMonitor_RecoveryNotifiesAfterCPUAndTemperatureAlert(t *testing.T) {
+	start := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	hot := stateWithMetrics(intPtr(100), intPtr(38))
+	hot.MaxCPUTempC = floatPtr(91)
+	hot.MaxSystemTempC = floatPtr(91)
+	cool := stateWithMetrics(intPtr(15), intPtr(38))
+	cool.MaxCPUTempC = floatPtr(70)
+	cool.MaxSystemTempC = floatPtr(70)
+	sampler := &fakeSystemSampler{states: []State{hot, hot, cool}}
+	m := NewMonitorWithSampler(time.Second, sampler)
+	m.hotTempSustain = time.Second
+	m.now = func() time.Time { return start }
+
+	var states []State
+	m.SetOnChange(func(state State) {
+		states = append(states, state)
+	})
+
+	m.poll()
+	start = start.Add(time.Second)
+	m.poll()
+	start = start.Add(m.cpuSpikeHold + time.Second)
+	m.poll()
+
+	if len(states) != 3 {
+		t.Fatalf("callback count = %d, want 3", len(states))
+	}
+	alerting := states[1]
+	if !alerting.CPUSpiking {
+		t.Fatal("alert update should retain CPU spike state")
+	}
+	if alerting.HotCPUTempC == nil || *alerting.HotCPUTempC != 91 {
+		t.Fatalf("alert update hot CPU temperature = %v, want 91", alerting.HotCPUTempC)
+	}
+	if alerting.HotSystemTempC == nil || *alerting.HotSystemTempC != 91 {
+		t.Fatalf("alert update hot system temperature = %v, want 91", alerting.HotSystemTempC)
+	}
+	recovered := states[2]
+	if recovered.CPUSpiking {
+		t.Fatal("recovery update should clear CPU spike state")
+	}
+	if recovered.HotCPUTempC != nil || recovered.HotSystemTempC != nil {
+		t.Fatalf("recovery update should clear hot temperatures: %#v", recovered)
+	}
+	if recovered.CPUPercent == nil || *recovered.CPUPercent != 15 {
+		t.Fatalf("recovery update CPU percent = %v, want 15", recovered.CPUPercent)
+	}
+}
+
 func TestMonitor_UnavailableClearsSpikeState(t *testing.T) {
 	start := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
 	sampler := &fakeSystemSampler{
