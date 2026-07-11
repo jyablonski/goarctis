@@ -57,6 +57,8 @@ type TrayManager struct {
 	hasDocker   bool
 	hasSystem   bool
 	renderCh    chan struct{}
+	setTitle    func(string)
+	setTooltip  func(string)
 	mu          sync.RWMutex
 }
 
@@ -70,7 +72,9 @@ type traySnapshot struct {
 
 func NewTrayManager() *TrayManager {
 	return &TrayManager{
-		devices: make(map[string]protocol.DeviceState),
+		devices:    make(map[string]protocol.DeviceState),
+		setTitle:   setTrayTitle,
+		setTooltip: systray.SetTooltip,
 	}
 }
 
@@ -79,8 +83,8 @@ func (t *TrayManager) Initialize(cfg TrayConfig) {
 	t.renderCh = make(chan struct{}, 1)
 
 	systray.SetIcon(assets.TrayIconPNG)
-	systray.SetTitle("")
-	systray.SetTooltip("goarctis")
+	t.setTitle("")
+	t.setTooltip("goarctis")
 
 	t.mStatus = systray.AddMenuItem("Initializing...", "Connection status")
 	t.mStatus.Disable()
@@ -383,13 +387,13 @@ func (t *TrayManager) renderTrayIcon(snapshot traySnapshot) {
 	titleParts := buildTrayTitleParts(snapshot.devices, snapshot.dockerState, snapshot.systemState)
 	tooltipParts := buildTrayTooltipParts(snapshot.devices, snapshot.dockerState, snapshot.systemState)
 
-	systray.SetTitle(strings.Join(titleParts, " "))
+	t.setTitle(strings.Join(titleParts, " "))
 	if len(tooltipParts) == 0 {
-		systray.SetTooltip(fmt.Sprintf("No devices connected (v%s)", version.Version))
+		t.setTooltip(fmt.Sprintf("No devices connected (v%s)", version.Version))
 	} else {
 		tooltip := strings.Join(tooltipParts, " | ")
 		tooltip += fmt.Sprintf(" (v%s)", version.Version)
-		systray.SetTooltip(tooltip)
+		t.setTooltip(tooltip)
 	}
 }
 
