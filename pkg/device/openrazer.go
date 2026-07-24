@@ -34,6 +34,7 @@ type RazerDevice struct {
 	conn         *dbus.Conn
 	devicePath   dbus.ObjectPath
 	deviceSerial string
+	dbusSerial   string
 	deviceName   string
 	state        protocol.DeviceState
 	stopChan     chan struct{}
@@ -59,6 +60,7 @@ func NewRazerDevice(devicePath dbus.ObjectPath, deviceSerial string) (*RazerDevi
 		conn:         conn,
 		devicePath:   devicePath,
 		deviceSerial: deviceSerial,
+		dbusSerial:   deviceSerial,
 		deviceName:   deviceName,
 		state: protocol.DeviceState{
 			DeviceID:    deviceSerial,
@@ -260,6 +262,30 @@ func isUnsupportedBatteryMethod(err error) bool {
 		strings.Contains(errStr, "does not exist")
 }
 
+type razerDeviceCandidate struct {
+	serial string
+	path   dbus.ObjectPath
+	name   string
+}
+
+func selectRazerDevice(candidates []razerDeviceCandidate, currentSerial, currentName string) (razerDeviceCandidate, bool) {
+	for _, candidate := range candidates {
+		if candidate.serial == currentSerial {
+			return candidate, true
+		}
+	}
+
+	var match razerDeviceCandidate
+	matchCount := 0
+	for _, candidate := range candidates {
+		if candidate.name == currentName && currentName != "" {
+			match = candidate
+			matchCount++
+		}
+	}
+	return match, matchCount == 1
+}
+
 func (r *RazerDevice) reconnectWithRetry() error {
 	maxRetries := 5
 	for i := 0; i < maxRetries; i++ {
@@ -332,6 +358,50 @@ func (r *RazerDevice) verifyDevice() error {
 	return nil
 }
 
+func (r *RazerDevice) refreshDevice() (bool, error) {
+	r.mu.RLock()
+	conn := r.conn
+	currentSerial := r.dbusSerial
+	currentName := r.deviceName
+	r.mu.RUnlock()
+
+	if conn == nil {
+		return false, ErrRazerConnectionUnavailable
+	}
+
+	manager := conn.Object(razerService, razerManagerPath)
+	var devices []string
+	if err := manager.Call(razerManagerIface+".getDevices", 0).Store(&devices); err != nil {
+		return false, fmt.Errorf("failed to refresh Razer devices: %w", err)
+	}
+
+	candidates := make([]razerDeviceCandidate, 0, len(devices))
+	for _, serial := range devices {
+		path := dbus.ObjectPath(fmt.Sprintf("/org/razer/device/%s", serial))
+		name := ""
+		if err := conn.Object(razerService, path).Call(razerDeviceIface+".getDeviceName", 0).Store(&name); err != nil {
+			log.Printf("Could not read the name of Razer device %s while refreshing: %v", serial, err)
+		}
+		candidates = append(candidates, razerDeviceCandidate{serial: serial, path: path, name: name})
+	}
+
+	candidate, ok := selectRazerDevice(candidates, currentSerial, currentName)
+	if !ok {
+		return false, nil
+	}
+
+	r.mu.Lock()
+	pathChanged := r.devicePath != candidate.path
+	r.devicePath = candidate.path
+	r.dbusSerial = candidate.serial
+	r.mu.Unlock()
+
+	if pathChanged {
+		log.Printf("Razer %s: rebound OpenRazer device to %s", r.deviceName, candidate.path)
+	}
+	return true, nil
+}
+
 func (r *RazerDevice) restartOpenRazerDaemon() error {
 	r.mu.RLock()
 	conn := r.conn
@@ -360,26 +430,45 @@ func (r *RazerDevice) restartOpenRazerDaemon() error {
 }
 
 func (r *RazerDevice) updateState() error {
-	r.mu.RLock()
-	conn := r.conn
-	r.mu.RUnlock()
-
-	if conn == nil {
-		return ErrRazerConnectionUnavailable
-	}
-
-	obj := conn.Object(razerService, r.devicePath)
-
 	var battery float64
-	err := obj.Call(razerPowerIface+".getBattery", 0).Store(&battery)
+	err := r.readBattery(&battery)
 	if err != nil {
 		if isConnectionClosed(err) {
 			return fmt.Errorf("failed to get battery: %w", err)
 		}
-		r.setBatteryUnavailable()
-		log.Printf("Razer %s: battery unavailable: %v", r.deviceName, err)
-		return nil
+
+		found, refreshErr := r.refreshDevice()
+		if refreshErr != nil {
+			return refreshErr
+		}
+		if !found {
+			r.setDisconnected()
+			log.Printf("Razer %s: device is no longer present in OpenRazer", r.deviceName)
+			return nil
+		}
+
+		// Switching between the receiver and the wired USB interface can replace
+		// the OpenRazer object without closing the D-Bus connection. Retry once
+		// against the refreshed object before exposing a warning in the tray.
+		err = r.readBattery(&battery)
+		if err == nil {
+			log.Printf("Razer %s: battery reporting recovered after device refresh", r.deviceName)
+		}
+		if err != nil && isConnectionClosed(err) {
+			return fmt.Errorf("failed to get battery after device refresh: %w", err)
+		}
+		if err != nil {
+			r.setBatteryUnavailable()
+			log.Printf("Razer %s: battery unavailable after device refresh: %v", r.deviceName, err)
+			return nil
+		}
 	}
+
+	conn, devicePath := r.connectionAndPath()
+	if conn == nil {
+		return ErrRazerConnectionUnavailable
+	}
+	obj := conn.Object(razerService, devicePath)
 
 	var isCharging bool
 	err = obj.Call(razerPowerIface+".isCharging", 0).Store(&isCharging)
@@ -401,6 +490,20 @@ func (r *RazerDevice) updateState() error {
 
 	log.Printf("🖱️ Razer %s: Battery %d%% (Charging: %v)", r.deviceName, batteryInt, isCharging)
 	return nil
+}
+
+func (r *RazerDevice) readBattery(battery *float64) error {
+	conn, devicePath := r.connectionAndPath()
+	if conn == nil {
+		return ErrRazerConnectionUnavailable
+	}
+	return conn.Object(razerService, devicePath).Call(razerPowerIface+".getBattery", 0).Store(battery)
+}
+
+func (r *RazerDevice) connectionAndPath() (*dbus.Conn, dbus.ObjectPath) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.conn, r.devicePath
 }
 
 func (r *RazerDevice) setBatteryUnavailable() {
