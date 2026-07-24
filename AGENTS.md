@@ -46,6 +46,13 @@ Building or running the tray app requires Linux GTK/AppIndicator development lib
 - Keep comments sparse. Retain comments that explain hardware quirks, protocol assumptions, Linux behavior, concurrency decisions, or safety constraints. Remove comments that only narrate obvious code.
 - Do not replace structured parsing or syscall/D-Bus behavior with ad hoc string tricks unless the surrounding code already uses that pattern.
 - Do not introduce non-ASCII text unless the file already uses it or the UI text intentionally needs icons.
+- Keep callbacks outside mutex critical sections; copy the callback and state while locked, then invoke it after unlocking.
+- Make `Start`, `Stop`, and `Close` lifecycle methods idempotent and ensure every ticker, goroutine, transport, file, and D-Bus connection has a shutdown path.
+- Bound external I/O with timeouts or interruptible reads; do not add polling or shutdown paths that can block indefinitely.
+- Put shell commands, HTTP calls, D-Bus operations, and hardware transports behind narrow seams when adding behavior so tests can use fakes.
+- Validate protocol/report lengths and sentinel values before indexing or converting bytes; return contextual errors for malformed input.
+- Wrap errors with the operation and preserve sentinel identity for `errors.Is`/`errors.As`; isolate unavoidable vendor error-string matching in helpers.
+- When changing stateful or concurrent code, run the focused package tests and `go test -race` in addition to `go test ./...`.
 
 ## Device-Specific Notes
 

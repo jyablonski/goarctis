@@ -99,6 +99,56 @@ func TestIsUnsupportedBatteryMethod(t *testing.T) {
 	}
 }
 
+func TestSelectRazerDevice(t *testing.T) {
+	tests := []struct {
+		name          string
+		candidates    []razerDeviceCandidate
+		currentSerial string
+		currentName   string
+		wantSerial    string
+		wantFound     bool
+	}{
+		{
+			name:          "keeps the current OpenRazer serial when available",
+			candidates:    []razerDeviceCandidate{{serial: "wired-serial", path: "/org/razer/device/wired-serial", name: "Razer DeathAdder V4 Pro"}},
+			currentSerial: "wired-serial",
+			currentName:   "Razer DeathAdder V4 Pro",
+			wantSerial:    "wired-serial",
+			wantFound:     true,
+		},
+		{
+			name:          "matches a replacement wired interface by device name",
+			candidates:    []razerDeviceCandidate{{serial: "wired-serial", path: "/org/razer/device/wired-serial", name: "Razer DeathAdder V4 Pro"}},
+			currentSerial: "missing-serial",
+			currentName:   "Razer DeathAdder V4 Pro",
+			wantSerial:    "wired-serial",
+			wantFound:     true,
+		},
+		{
+			name: "does not guess between duplicate device names",
+			candidates: []razerDeviceCandidate{
+				{serial: "wired-serial", path: "/org/razer/device/wired-serial", name: "Razer DeathAdder V4 Pro"},
+				{serial: "other-serial", path: "/org/razer/device/other-serial", name: "Razer DeathAdder V4 Pro"},
+			},
+			currentSerial: "missing-serial",
+			currentName:   "Razer DeathAdder V4 Pro",
+			wantFound:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, found := selectRazerDevice(tt.candidates, tt.currentSerial, tt.currentName)
+			if found != tt.wantFound {
+				t.Fatalf("found = %v, want %v", found, tt.wantFound)
+			}
+			if found && got.serial != tt.wantSerial {
+				t.Fatalf("serial = %q, want %q", got.serial, tt.wantSerial)
+			}
+		})
+	}
+}
+
 func TestRazerSetStateComparesPointerValues(t *testing.T) {
 	initialBattery := 70
 	initialCharging := false
