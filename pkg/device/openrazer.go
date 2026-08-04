@@ -17,15 +17,22 @@ const (
 	razerService      = "org.razer"
 	razerManagerPath  = "/org/razer"
 	razerManagerIface = "razer.devices"
-	razerDeviceIface  = "razer.device"
+	razerMiscIface    = "razer.device.misc"
 	razerPowerIface   = "razer.device.power"
 	pollInterval      = 5 * time.Second
+
+	// Polls the device may stay missing from OpenRazer (e.g. during a
+	// wireless/wired swap) before a still-present HID device means the
+	// daemon itself is wedged and needs a restart.
+	razerMissingPollsBeforeRestart = 3
 )
 
 var (
 	ErrRazerConnectionUnavailable = errors.New("razer D-Bus connection not available")
 	ErrRazerReconnectFailed       = errors.New("failed to reconnect to Razer device")
 	ErrOpenRazerDaemonUnavailable = errors.New("OpenRazer daemon not available")
+
+	errRazerDeviceMissing = errors.New("razer device not present in OpenRazer")
 )
 
 const razerBatteryUnavailableWarning = "Battery unavailable: OpenRazer driver is not reporting battery data"
@@ -44,14 +51,16 @@ type RazerDevice struct {
 }
 
 func NewRazerDevice(devicePath dbus.ObjectPath, deviceSerial string) (*RazerDevice, error) {
-	conn, err := dbus.SessionBus()
+	// Private connection: dbus.SessionBus() returns a process-wide shared
+	// singleton, and this device closes its connection on reconnect/Close.
+	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to session D-Bus: %w", err)
 	}
 
 	deviceName := fmt.Sprintf("Razer Device (%s)", deviceSerial)
 	var name string
-	err = conn.Object(razerService, devicePath).Call(razerDeviceIface+".getDeviceName", 0).Store(&name)
+	err = conn.Object(razerService, devicePath).Call(razerMiscIface+".getDeviceName", 0).Store(&name)
 	if err == nil && name != "" {
 		deviceName = name
 	}
@@ -179,6 +188,8 @@ func (r *RazerDevice) pollLoop() {
 
 	consecutiveErrors := 0
 	maxConsecutiveErrors := 3
+	missingPolls := 0
+	daemonRestartAttempted := false
 
 	for {
 		select {
@@ -186,6 +197,23 @@ func (r *RazerDevice) pollLoop() {
 			return
 		case <-ticker.C:
 			if err := r.updateState(); err != nil {
+				// The OpenRazer daemon's udev hotplug thread can die on a
+				// sysfs race during USB replug, leaving the daemon serving
+				// an empty device list forever while D-Bus stays healthy.
+				// If Razer hardware is still present after several missing
+				// polls, restarting the daemon is the only recovery.
+				if errors.Is(err, errRazerDeviceMissing) {
+					missingPolls++
+					if shouldRestartRazerDaemon(missingPolls, daemonRestartAttempted, razerHIDPresent(RealFileSystem{})) {
+						daemonRestartAttempted = true
+						log.Printf("Razer %s: OpenRazer reports no matching device but Razer hardware is present, restarting OpenRazer daemon...", r.deviceName)
+						if restartErr := r.restartOpenRazerDaemon(); restartErr != nil {
+							log.Printf("Failed to restart OpenRazer daemon: %v", restartErr)
+						}
+					}
+					continue
+				}
+
 				consecutiveErrors++
 
 				if isConnectionClosed(err) {
@@ -235,9 +263,25 @@ func (r *RazerDevice) pollLoop() {
 				}
 			} else {
 				consecutiveErrors = 0
+				missingPolls = 0
+				daemonRestartAttempted = false
 			}
 		}
 	}
+}
+
+// shouldRestartRazerDaemon limits recovery to one daemon restart per absence
+// episode so a genuinely unplugged device cannot cause a restart loop.
+func shouldRestartRazerDaemon(missingPolls int, alreadyAttempted, hidPresent bool) bool {
+	return !alreadyAttempted && hidPresent && missingPolls >= razerMissingPollsBeforeRestart
+}
+
+func razerHIDPresent(fs FileSystem) bool {
+	devices, err := findRazerHIDDevices(fs)
+	if err != nil {
+		return false
+	}
+	return len(devices) > 0
 }
 
 func isConnectionClosed(err error) bool {
@@ -327,7 +371,7 @@ func (r *RazerDevice) reconnect() error {
 		r.conn = nil
 	}
 
-	conn, err := dbus.SessionBus()
+	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
 		return fmt.Errorf("failed to reconnect to session D-Bus: %w", err)
 	}
@@ -379,7 +423,7 @@ func (r *RazerDevice) refreshDevice() (bool, error) {
 	for _, serial := range devices {
 		path := dbus.ObjectPath(fmt.Sprintf("/org/razer/device/%s", serial))
 		name := ""
-		if err := conn.Object(razerService, path).Call(razerDeviceIface+".getDeviceName", 0).Store(&name); err != nil {
+		if err := conn.Object(razerService, path).Call(razerMiscIface+".getDeviceName", 0).Store(&name); err != nil {
 			log.Printf("Could not read the name of Razer device %s while refreshing: %v", serial, err)
 		}
 		candidates = append(candidates, razerDeviceCandidate{serial: serial, path: path, name: name})
@@ -444,7 +488,7 @@ func (r *RazerDevice) updateState() error {
 		if !found {
 			r.setDisconnected()
 			log.Printf("Razer %s: device is no longer present in OpenRazer", r.deviceName)
-			return nil
+			return errRazerDeviceMissing
 		}
 
 		// Switching between the receiver and the wired USB interface can replace
@@ -516,7 +560,9 @@ func (r *RazerDevice) setBatteryUnavailable() {
 }
 
 func DiscoverRazerDevices() ([]*RazerDevice, error) {
-	conn, err := dbus.SessionBus()
+	// Private connection: the deferred Close below must not tear down the
+	// shared session bus that other code may hold.
+	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
 		if warningDevices := discoverRazerWarningDevices(RealFileSystem{}); len(warningDevices) > 0 {
 			log.Printf("OpenRazer D-Bus unavailable; showing warning for %d Razer HID device(s): %v", len(warningDevices), err)

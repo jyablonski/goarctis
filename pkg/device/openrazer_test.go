@@ -149,6 +149,74 @@ func TestSelectRazerDevice(t *testing.T) {
 	}
 }
 
+func TestShouldRestartRazerDaemon(t *testing.T) {
+	tests := []struct {
+		name             string
+		missingPolls     int
+		alreadyAttempted bool
+		hidPresent       bool
+		want             bool
+	}{
+		{
+			name:         "restarts after threshold when hardware is present",
+			missingPolls: razerMissingPollsBeforeRestart,
+			hidPresent:   true,
+			want:         true,
+		},
+		{
+			name:         "waits for the missing poll threshold",
+			missingPolls: razerMissingPollsBeforeRestart - 1,
+			hidPresent:   true,
+			want:         false,
+		},
+		{
+			name:         "does not restart when hardware is unplugged",
+			missingPolls: razerMissingPollsBeforeRestart,
+			hidPresent:   false,
+			want:         false,
+		},
+		{
+			name:             "restarts only once per absence episode",
+			missingPolls:     razerMissingPollsBeforeRestart + 5,
+			alreadyAttempted: true,
+			hidPresent:       true,
+			want:             false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldRestartRazerDaemon(tt.missingPolls, tt.alreadyAttempted, tt.hidPresent)
+			if got != tt.want {
+				t.Fatalf("shouldRestartRazerDaemon() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRazerHIDPresent(t *testing.T) {
+	fs := &MockFileSystem{
+		dirContents: map[string][]os.FileInfo{
+			razerHIDSysfsDir: {
+				MockFileInfo{name: "0003:00001532:000000BF.0001"},
+			},
+		},
+		files: map[string][]byte{
+			"/sys/bus/hid/devices/0003:00001532:000000BF.0001/uevent": []byte("HID_ID=0003:00001532:000000BF\nHID_NAME=Razer Test Mouse\nHID_UNIQ=ABC123\n"),
+		},
+	}
+	if !razerHIDPresent(fs) {
+		t.Fatal("razerHIDPresent() = false with a Razer HID device in sysfs")
+	}
+
+	empty := &MockFileSystem{
+		dirContents: map[string][]os.FileInfo{razerHIDSysfsDir: {}},
+	}
+	if razerHIDPresent(empty) {
+		t.Fatal("razerHIDPresent() = true with no Razer HID devices")
+	}
+}
+
 func TestRazerSetStateComparesPointerValues(t *testing.T) {
 	initialBattery := 70
 	initialCharging := false
