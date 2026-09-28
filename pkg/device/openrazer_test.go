@@ -125,6 +125,45 @@ func TestSelectRazerDevice(t *testing.T) {
 			wantFound:     true,
 		},
 		{
+			name: "matches wired mode after receiver reported a placeholder serial",
+			candidates: []razerDeviceCandidate{
+				{serial: "632539H34906077", path: "/org/razer/device/632539H34906077", name: "Razer DeathAdder V4 Pro (Wired)"},
+			},
+			currentSerial: "UNKNOWN_153200BF_0000",
+			currentName:   "Razer DeathAdder V4 Pro (Wireless)",
+			wantSerial:    "632539H34906077",
+			wantFound:     true,
+		},
+		{
+			name: "matches receiver mode after switching back from wired",
+			candidates: []razerDeviceCandidate{
+				{serial: "UNKNOWN_153200BF_0000", path: "/org/razer/device/UNKNOWN_153200BF_0000", name: "Razer DeathAdder V4 Pro (Wireless)"},
+			},
+			currentSerial: "632539H34906077",
+			currentName:   "Razer DeathAdder V4 Pro (Wireless)",
+			wantSerial:    "UNKNOWN_153200BF_0000",
+			wantFound:     true,
+		},
+		{
+			name: "does not match a different model",
+			candidates: []razerDeviceCandidate{
+				{serial: "other-serial", path: "/org/razer/device/other-serial", name: "Razer Viper V3 Pro (Wired)"},
+			},
+			currentSerial: "UNKNOWN_153200BF_0000",
+			currentName:   "Razer DeathAdder V4 Pro (Wireless)",
+			wantFound:     false,
+		},
+		{
+			name: "does not guess between duplicate models across modes",
+			candidates: []razerDeviceCandidate{
+				{serial: "wired-serial", path: "/org/razer/device/wired-serial", name: "Razer DeathAdder V4 Pro (Wired)"},
+				{serial: "other-serial", path: "/org/razer/device/other-serial", name: "Razer DeathAdder V4 Pro (Wireless)"},
+			},
+			currentSerial: "missing-serial",
+			currentName:   "Razer DeathAdder V4 Pro (Wireless)",
+			wantFound:     false,
+		},
+		{
 			name: "does not guess between duplicate device names",
 			candidates: []razerDeviceCandidate{
 				{serial: "wired-serial", path: "/org/razer/device/wired-serial", name: "Razer DeathAdder V4 Pro"},
@@ -146,6 +185,33 @@ func TestSelectRazerDevice(t *testing.T) {
 				t.Fatalf("serial = %q, want %q", got.serial, tt.wantSerial)
 			}
 		})
+	}
+}
+
+func TestRazerModelName(t *testing.T) {
+	tests := map[string]string{
+		"Razer DeathAdder V4 Pro (Wired)":     "Razer DeathAdder V4 Pro",
+		"Razer DeathAdder V4 Pro (Wireless)":  "Razer DeathAdder V4 Pro",
+		"Razer Basilisk Ultimate (Receiver)":  "Razer Basilisk Ultimate",
+		"Razer DeathAdder V4 Pro":             "Razer DeathAdder V4 Pro",
+		"Razer BlackWidow Chroma (Alternate)": "Razer BlackWidow Chroma (Alternate)",
+		"":                                    "",
+	}
+	for input, want := range tests {
+		if got := razerModelName(input); got != want {
+			t.Errorf("razerModelName(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestOpenRazerListEmptyIsMissingDevice(t *testing.T) {
+	// pollLoop counts every missing poll but only restarts the daemon when the
+	// list is empty, so the empty-list error must still read as missing.
+	if !errors.Is(errOpenRazerListEmpty, errRazerDeviceMissing) {
+		t.Fatal("errOpenRazerListEmpty must wrap errRazerDeviceMissing")
+	}
+	if errors.Is(errRazerDeviceMissing, errOpenRazerListEmpty) {
+		t.Fatal("a non-empty list without a match must not trigger a daemon restart")
 	}
 }
 

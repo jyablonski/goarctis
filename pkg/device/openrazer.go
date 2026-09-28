@@ -33,6 +33,9 @@ var (
 	ErrOpenRazerDaemonUnavailable = errors.New("OpenRazer daemon not available")
 
 	errRazerDeviceMissing = errors.New("razer device not present in OpenRazer")
+	// Only an empty device list indicates a wedged daemon; a non-empty list
+	// without a match means the daemon is healthy and a restart cannot help.
+	errOpenRazerListEmpty = fmt.Errorf("%w: OpenRazer lists no devices", errRazerDeviceMissing)
 )
 
 const razerBatteryUnavailableWarning = "Battery unavailable: OpenRazer driver is not reporting battery data"
@@ -42,12 +45,15 @@ type RazerDevice struct {
 	devicePath   dbus.ObjectPath
 	deviceSerial string
 	dbusSerial   string
-	deviceName   string
-	state        protocol.DeviceState
-	stopChan     chan struct{}
-	onChange     func(protocol.DeviceState)
-	mu           sync.RWMutex
-	warningOnly  bool
+	// OpenRazer's reported name, used for rebinding across mode swaps. Kept
+	// separate from deviceName, which falls back to a synthetic label.
+	dbusName    string
+	deviceName  string
+	state       protocol.DeviceState
+	stopChan    chan struct{}
+	onChange    func(protocol.DeviceState)
+	mu          sync.RWMutex
+	warningOnly bool
 }
 
 func NewRazerDevice(devicePath dbus.ObjectPath, deviceSerial string) (*RazerDevice, error) {
@@ -59,9 +65,8 @@ func NewRazerDevice(devicePath dbus.ObjectPath, deviceSerial string) (*RazerDevi
 	}
 
 	deviceName := fmt.Sprintf("Razer Device (%s)", deviceSerial)
-	var name string
-	err = conn.Object(razerService, devicePath).Call(razerMiscIface+".getDeviceName", 0).Store(&name)
-	if err == nil && name != "" {
+	name := readRazerDeviceName(conn, devicePath)
+	if name != "" {
 		deviceName = name
 	}
 
@@ -70,6 +75,7 @@ func NewRazerDevice(devicePath dbus.ObjectPath, deviceSerial string) (*RazerDevi
 		devicePath:   devicePath,
 		deviceSerial: deviceSerial,
 		dbusSerial:   deviceSerial,
+		dbusName:     name,
 		deviceName:   deviceName,
 		state: protocol.DeviceState{
 			DeviceID:    deviceSerial,
@@ -204,9 +210,10 @@ func (r *RazerDevice) pollLoop() {
 				// polls, restarting the daemon is the only recovery.
 				if errors.Is(err, errRazerDeviceMissing) {
 					missingPolls++
-					if shouldRestartRazerDaemon(missingPolls, daemonRestartAttempted, razerHIDPresent(RealFileSystem{})) {
+					listEmpty := errors.Is(err, errOpenRazerListEmpty)
+					if listEmpty && shouldRestartRazerDaemon(missingPolls, daemonRestartAttempted, razerHIDPresent(RealFileSystem{})) {
 						daemonRestartAttempted = true
-						log.Printf("Razer %s: OpenRazer reports no matching device but Razer hardware is present, restarting OpenRazer daemon...", r.deviceName)
+						log.Printf("Razer %s: OpenRazer lists no devices but Razer hardware is present, restarting OpenRazer daemon...", r.deviceName)
 						if restartErr := r.restartOpenRazerDaemon(); restartErr != nil {
 							log.Printf("Failed to restart OpenRazer daemon: %v", restartErr)
 						}
@@ -319,15 +326,33 @@ func selectRazerDevice(candidates []razerDeviceCandidate, currentSerial, current
 		}
 	}
 
+	// Serials don't survive a mode swap: the wireless receiver can report a
+	// placeholder like UNKNOWN_153200BF_0000 while the wired interface reports
+	// the real serial. OpenRazer also names each mode separately, e.g.
+	// "Razer DeathAdder V4 Pro (Wireless)" vs "(Wired)", so match on the
+	// model name with the connection-mode suffix removed.
+	currentModel := razerModelName(currentName)
 	var match razerDeviceCandidate
 	matchCount := 0
 	for _, candidate := range candidates {
-		if candidate.name == currentName && currentName != "" {
+		if currentModel != "" && razerModelName(candidate.name) == currentModel {
 			match = candidate
 			matchCount++
 		}
 	}
 	return match, matchCount == 1
+}
+
+var razerConnectionModeSuffixes = []string{"(Wired)", "(Wireless)", "(Receiver)", "(Bluetooth)"}
+
+func razerModelName(name string) string {
+	name = strings.TrimSpace(name)
+	for _, suffix := range razerConnectionModeSuffixes {
+		if trimmed, ok := strings.CutSuffix(name, suffix); ok {
+			return strings.TrimSpace(trimmed)
+		}
+	}
+	return name
 }
 
 func (r *RazerDevice) reconnectWithRetry() error {
@@ -406,7 +431,7 @@ func (r *RazerDevice) refreshDevice() (bool, error) {
 	r.mu.RLock()
 	conn := r.conn
 	currentSerial := r.dbusSerial
-	currentName := r.deviceName
+	currentName := r.dbusName
 	r.mu.RUnlock()
 
 	if conn == nil {
@@ -417,6 +442,9 @@ func (r *RazerDevice) refreshDevice() (bool, error) {
 	var devices []string
 	if err := manager.Call(razerManagerIface+".getDevices", 0).Store(&devices); err != nil {
 		return false, fmt.Errorf("failed to refresh Razer devices: %w", err)
+	}
+	if len(devices) == 0 {
+		return false, errOpenRazerListEmpty
 	}
 
 	candidates := make([]razerDeviceCandidate, 0, len(devices))
@@ -438,6 +466,9 @@ func (r *RazerDevice) refreshDevice() (bool, error) {
 	pathChanged := r.devicePath != candidate.path
 	r.devicePath = candidate.path
 	r.dbusSerial = candidate.serial
+	if candidate.name != "" {
+		r.dbusName = candidate.name
+	}
 	r.mu.Unlock()
 
 	if pathChanged {
@@ -482,6 +513,11 @@ func (r *RazerDevice) updateState() error {
 		}
 
 		found, refreshErr := r.refreshDevice()
+		if errors.Is(refreshErr, errOpenRazerListEmpty) {
+			r.setDisconnected()
+			log.Printf("Razer %s: OpenRazer is not listing any devices", r.deviceName)
+			return refreshErr
+		}
 		if refreshErr != nil {
 			return refreshErr
 		}
@@ -514,6 +550,17 @@ func (r *RazerDevice) updateState() error {
 	}
 	obj := conn.Object(razerService, devicePath)
 
+	r.mu.RLock()
+	nameKnown := r.dbusName != ""
+	r.mu.RUnlock()
+	if !nameKnown {
+		if name := readRazerDeviceName(conn, devicePath); name != "" {
+			r.mu.Lock()
+			r.dbusName = name
+			r.mu.Unlock()
+		}
+	}
+
 	var isCharging bool
 	err = obj.Call(razerPowerIface+".isCharging", 0).Store(&isCharging)
 	if err != nil {
@@ -534,6 +581,14 @@ func (r *RazerDevice) updateState() error {
 
 	log.Printf("🖱️ Razer %s: Battery %d%% (Charging: %v)", r.deviceName, batteryInt, isCharging)
 	return nil
+}
+
+func readRazerDeviceName(conn *dbus.Conn, devicePath dbus.ObjectPath) string {
+	var name string
+	if err := conn.Object(razerService, devicePath).Call(razerMiscIface+".getDeviceName", 0).Store(&name); err != nil {
+		return ""
+	}
+	return name
 }
 
 func (r *RazerDevice) readBattery(battery *float64) error {
